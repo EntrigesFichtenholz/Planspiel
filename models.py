@@ -25,8 +25,22 @@ class BusinessFirm:
     # Business Metrics
     revenue: float = 0.0
     profit: float = 0.0
+    ebit: float = 0.0
     market_share: float = 0.0
     roi: float = 0.0
+    units_sold: float = 0.0
+
+    # Cost Breakdown (for transparency)
+    cost_breakdown: Dict = field(default_factory=lambda: {
+        "variable": 0.0,
+        "inventory": 0.0,
+        "depreciation": 0.0,
+        "overhead": 0.0,
+        "marketing": 0.0,
+        "rd": 0.0,
+        "interest": 0.0,
+        "total": 0.0
+    })
 
     # Production & Inventory
     product_price: float = 120.0  # Produktpreis in €
@@ -126,6 +140,20 @@ class BusinessFirm:
         net_profit = ebt - taxes
 
         self.profit = net_profit
+        self.ebit = ebit
+        self.units_sold = actual_sales
+
+        # Store cost breakdown for transparency
+        self.cost_breakdown = {
+            "variable": variable_costs,
+            "inventory": inventory_costs,
+            "depreciation": total_depreciation,
+            "overhead": overhead_costs,
+            "marketing": self.marketing_budget,
+            "rd": self.rd_budget,
+            "interest": interest_costs,
+            "total": total_costs
+        }
 
         # 4. UPDATE CASH & INVENTORY
         self.cash += net_profit
@@ -206,8 +234,10 @@ class BusinessFirm:
             "equity": round(self.equity, 2),
             "revenue": round(self.revenue, 2),
             "profit": round(self.profit, 2),
+            "ebit": round(self.ebit, 2),
             "market_share": round(self.market_share, 4),
             "roi": round(self.roi, 2),
+            "units_sold": round(self.units_sold, 2),
             "product_price": round(self.product_price, 2),
             "production_capacity": round(self.production_capacity, 2),
             "inventory_level": round(self.inventory_level, 2),
@@ -221,6 +251,16 @@ class BusinessFirm:
                 "machines": round(self.machines_value, 2),
                 "equipment": round(self.equipment_value, 2),
                 "total": round(self.buildings_value + self.machines_value + self.equipment_value, 2)
+            },
+            "costs": {
+                "variable": round(self.cost_breakdown.get("variable", 0), 2),
+                "inventory": round(self.cost_breakdown.get("inventory", 0), 2),
+                "depreciation": round(self.cost_breakdown.get("depreciation", 0), 2),
+                "overhead": round(self.cost_breakdown.get("overhead", 0), 2),
+                "marketing": round(self.cost_breakdown.get("marketing", 0), 2),
+                "rd": round(self.cost_breakdown.get("rd", 0), 2),
+                "interest": round(self.cost_breakdown.get("interest", 0), 2),
+                "total": round(self.cost_breakdown.get("total", 0), 2)
             }
         }
 
