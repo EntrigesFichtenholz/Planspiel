@@ -369,8 +369,8 @@ async def startup_event():
     game.create_bot_firms()
     game.is_active = True
 
-    print(f"✓ {len(game.firms)} Bot-Firmen erstellt")
-    print(f"✓ Quartalsdauer: {game.quarter_duration}s")
+    print(f"[OK] {len(game.firms)} Bot-Firmen erstellt")
+    print(f"[OK] Quartalsdauer: {game.quarter_duration}s")
 
     async def quarter_timer():
         while True:
@@ -402,7 +402,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=DEBUG_MODE,
+        port=8001,  # Changed to 8001 to avoid port conflict
+        reload=False,  # Disabled reload to force fresh import
         log_level="debug" if DEBUG_MODE else "info"
     )
