@@ -26,9 +26,39 @@ class BusinessFirm:
     revenue: float = 0.0
     profit: float = 0.0
     ebit: float = 0.0
+    ebitda: float = 0.0
     market_share: float = 0.0
     roi: float = 0.0
+    roe: float = 0.0  # Return on Equity
+    roa: float = 0.0  # Return on Assets
     units_sold: float = 0.0
+
+    # Profitability Ratios (Rentabilitätskennzahlen)
+    gross_margin: float = 0.0  # (Revenue - Variable Costs) / Revenue
+    operating_margin: float = 0.0  # EBIT / Revenue
+    net_margin: float = 0.0  # Net Profit / Revenue
+    contribution_margin: float = 0.0  # (Revenue - Variable Costs) / Revenue
+
+    # Efficiency Ratios (Effizienzkennzahlen)
+    asset_turnover: float = 0.0  # Revenue / Total Assets
+    inventory_turnover: float = 0.0  # COGS / Average Inventory
+    capacity_utilization: float = 0.0  # Units Produced / Max Capacity
+
+    # Leverage Ratios (Verschuldungskennzahlen)
+    debt_to_equity: float = 0.0  # Debt / Equity
+    equity_ratio: float = 0.0  # Equity / Total Assets
+    debt_ratio: float = 0.0  # Debt / Total Assets
+    interest_coverage: float = 0.0  # EBIT / Interest Expenses
+
+    # Growth Metrics (Wachstumskennzahlen)
+    revenue_growth: float = 0.0  # % change from previous quarter
+    profit_growth: float = 0.0  # % change from previous quarter
+    market_share_growth: float = 0.0  # % change from previous quarter
+
+    # Previous Quarter Values (for growth calculations)
+    prev_revenue: float = 0.0
+    prev_profit: float = 0.0
+    prev_market_share: float = 0.0
 
     # Cost Breakdown (for transparency)
     cost_breakdown: Dict = field(default_factory=lambda: {
@@ -155,6 +185,88 @@ class BusinessFirm:
             "total": total_costs
         }
 
+        # 3.5 CALCULATE ALL BWL KENNZAHLEN (Business Metrics)
+
+        # EBITDA (EBIT + Depreciation)
+        self.ebitda = ebit + total_depreciation
+
+        # Profitability Ratios (Rentabilitätskennzahlen)
+        if self.revenue > 0:
+            self.gross_margin = (gross_profit / self.revenue) * 100  # in %
+            self.operating_margin = (ebit / self.revenue) * 100  # in %
+            self.net_margin = (net_profit / self.revenue) * 100  # in %
+            self.contribution_margin = ((self.revenue - variable_costs) / self.revenue) * 100  # in %
+        else:
+            self.gross_margin = 0.0
+            self.operating_margin = 0.0
+            self.net_margin = 0.0
+            self.contribution_margin = 0.0
+
+        # Efficiency Ratios (Effizienzkennzahlen)
+        total_assets = self.cash + self.buildings_value + self.machines_value + self.equipment_value
+        if total_assets > 0:
+            self.asset_turnover = self.revenue / total_assets  # Kapitalumschlag
+            self.roa = (net_profit / total_assets) * 100  # Return on Assets in %
+        else:
+            self.asset_turnover = 0.0
+            self.roa = 0.0
+
+        # Inventory Turnover (Lagerumschlag)
+        avg_inventory = (self.inventory_level + (self.inventory_level + self.production_capacity - actual_sales)) / 2
+        if avg_inventory > 0:
+            cogs = variable_costs  # Cost of Goods Sold
+            self.inventory_turnover = cogs / (avg_inventory * material_cost_per_unit)
+        else:
+            self.inventory_turnover = 0.0
+
+        # Capacity Utilization (Kapazitätsauslastung)
+        max_capacity = 120_000.0  # Maximum production capacity
+        if max_capacity > 0:
+            self.capacity_utilization = (self.production_capacity / max_capacity) * 100  # in %
+        else:
+            self.capacity_utilization = 0.0
+
+        # Leverage Ratios (Verschuldungskennzahlen)
+        if self.equity > 0:
+            self.debt_to_equity = self.debt / self.equity
+            self.roe = (net_profit / self.equity) * 100  # Return on Equity in %
+        else:
+            self.debt_to_equity = 0.0
+            self.roe = 0.0
+
+        if total_assets > 0:
+            self.equity_ratio = (self.equity / total_assets) * 100  # Eigenkapitalquote in %
+            self.debt_ratio = (self.debt / total_assets) * 100  # Fremdkapitalquote in %
+        else:
+            self.equity_ratio = 0.0
+            self.debt_ratio = 0.0
+
+        if interest_costs > 0:
+            self.interest_coverage = ebit / interest_costs  # Zinsdeckungsgrad
+        else:
+            self.interest_coverage = float('inf') if ebit > 0 else 0.0
+
+        # Growth Metrics (Wachstumskennzahlen) - compare to previous quarter
+        if self.prev_revenue > 0:
+            self.revenue_growth = ((self.revenue - self.prev_revenue) / self.prev_revenue) * 100
+        else:
+            self.revenue_growth = 0.0
+
+        if self.prev_profit != 0:
+            self.profit_growth = ((net_profit - self.prev_profit) / abs(self.prev_profit)) * 100
+        else:
+            self.profit_growth = 0.0 if net_profit == 0 else 100.0
+
+        if self.prev_market_share > 0:
+            self.market_share_growth = ((self.market_share - self.prev_market_share) / self.prev_market_share) * 100
+        else:
+            self.market_share_growth = 0.0
+
+        # Update previous quarter values for next calculation
+        self.prev_revenue = self.revenue
+        self.prev_profit = net_profit
+        self.prev_market_share = self.market_share
+
         # 4. UPDATE CASH & INVENTORY
         self.cash += net_profit
         self.inventory_level = max(0, self.inventory_level + self.production_capacity - actual_sales)
@@ -261,6 +373,31 @@ class BusinessFirm:
                 "rd": round(self.cost_breakdown.get("rd", 0), 2),
                 "interest": round(self.cost_breakdown.get("interest", 0), 2),
                 "total": round(self.cost_breakdown.get("total", 0), 2)
+            },
+            "profitability_ratios": {
+                "ebitda": round(self.ebitda, 2),
+                "gross_margin": round(self.gross_margin, 2),
+                "operating_margin": round(self.operating_margin, 2),
+                "net_margin": round(self.net_margin, 2),
+                "contribution_margin": round(self.contribution_margin, 2),
+                "roe": round(self.roe, 2),
+                "roa": round(self.roa, 2)
+            },
+            "efficiency_ratios": {
+                "asset_turnover": round(self.asset_turnover, 4),
+                "inventory_turnover": round(self.inventory_turnover, 2),
+                "capacity_utilization": round(self.capacity_utilization, 2)
+            },
+            "leverage_ratios": {
+                "debt_to_equity": round(self.debt_to_equity, 4),
+                "equity_ratio": round(self.equity_ratio, 2),
+                "debt_ratio": round(self.debt_ratio, 2),
+                "interest_coverage": round(self.interest_coverage, 2) if self.interest_coverage != float('inf') else "infinite"
+            },
+            "growth_metrics": {
+                "revenue_growth": round(self.revenue_growth, 2),
+                "profit_growth": round(self.profit_growth, 2),
+                "market_share_growth": round(self.market_share_growth, 2)
             }
         }
 
