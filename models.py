@@ -45,9 +45,9 @@ class BusinessFirm:
     equipment_value: float = 30_000_000.0  # Ausstattung
 
     # Quarterly Depreciation Rates
-    buildings_depreciation_rate: float = 0.01  # 1% pro Quartal = 250k
-    machines_depreciation_rate: float = 0.025  # 2.5% pro Quartal = 1.25M
-    equipment_depreciation_rate: float = 0.025  # 2.5% pro Quartal = 750k
+    buildings_depreciation_rate: float = 0.005  # 0.5% pro Quartal = 50k (vorher: 1% = 250k)
+    machines_depreciation_rate: float = 0.01  # 1% pro Quartal = 500k (vorher: 2.5% = 1.25M)
+    equipment_depreciation_rate: float = 0.01  # 1% pro Quartal = 300k (vorher: 2.5% = 750k)
 
     # Current Quarter
     current_quarter: int = 0
@@ -100,7 +100,7 @@ class BusinessFirm:
         total_depreciation = depreciation_buildings + depreciation_machines + depreciation_equipment
 
         # Gemeinkosten (Verwaltung, Vertrieb)
-        overhead_costs = 6_000_000.0  # 6M€ pro Quartal
+        overhead_costs = 200_000.0  # 200k€ pro Quartal (vorher: 6M€)
 
         # Zinsen auf Fremdkapital (10% p.a. = 2.5% pro Quartal)
         interest_costs = self.debt * 0.025
