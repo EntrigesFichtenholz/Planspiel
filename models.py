@@ -97,6 +97,9 @@ class BusinessFirm:
     current_quarter: int = 0
     last_update: float = field(default_factory=time.time)
 
+    # Historical Data (stores last 20 quarters)
+    history: List[Dict] = field(default_factory=list)
+
     # Trading metrics
     customer_satisfaction: float = 0.7
     supplier_trust: float = 0.8
@@ -398,7 +401,8 @@ class BusinessFirm:
                 "revenue_growth": round(self.revenue_growth, 2),
                 "profit_growth": round(self.profit_growth, 2),
                 "market_share_growth": round(self.market_share_growth, 2)
-            }
+            },
+            "history": self.history
         }
 
 
@@ -467,6 +471,21 @@ class GameSession:
         for firm_id, firm in self.firms.items():
             result = firm.calculate_quarterly_results()
             results[firm_id] = result
+
+            # Store historical data (after quarter results calculated)
+            firm.history.append({
+                "quarter": self.current_quarter,
+                "revenue": firm.revenue,
+                "profit": firm.profit,
+                "cash": firm.cash,
+                "roi": firm.roi,
+                "market_share": firm.market_share,
+                "units_sold": firm.units_sold
+            })
+
+            # Keep only last 20 quarters
+            if len(firm.history) > 20:
+                firm.history = firm.history[-20:]
 
         # Berechne Market Shares
         total_revenue = sum(f.revenue for f in self.firms.values())

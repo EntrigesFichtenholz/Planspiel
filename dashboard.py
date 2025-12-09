@@ -451,6 +451,15 @@ def create_production_inventory_status(firm_data):
 
 def create_dashboard_layout(firm_id, firm_data):
     """Main Dashboard Layout mit Live-Updates"""
+    # Extract historical data from firm_data
+    history = firm_data.get('history', [])
+    historical_data = {
+        "quarters": [h['quarter'] for h in history],
+        "revenue": [h['revenue'] for h in history],
+        "profit": [h['profit'] for h in history],
+        "cash": [h['cash'] for h in history]
+    }
+
     return html.Div([
         create_header(),
         dbc.Container([
@@ -497,7 +506,7 @@ def create_dashboard_layout(firm_id, firm_data):
 
             # Hidden stores
             dcc.Store(id="firm-id-store", data=firm_id),
-            dcc.Store(id="historical-data-store", data={"quarters": [], "revenue": [], "profit": [], "cash": []}),
+            dcc.Store(id="historical-data-store", data=historical_data),  # Initialize with history from backend
             dcc.Interval(id="refresh-interval", interval=1000, n_intervals=0),  # 1s refresh for LIVE timer
         ], fluid=True)
     ])
