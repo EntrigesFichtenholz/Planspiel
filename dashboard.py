@@ -158,12 +158,64 @@ def create_dashboard_kpis(firm_data):
     ], className="mb-4 g-3")
 
 
+def create_current_settings_card(firm_data):
+    """Zeigt die aktuell aktiven Einstellungen prominent an"""
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-check-circle me-2 text-success"),
+            "Aktuelle Einstellungen (Aktiv seit Q", firm_data.get('current_quarter', 0), ")"
+        ])),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        html.H6("Produktpreis", className="text-muted mb-1"),
+                        html.H4(f"€{firm_data.get('product_price', 120):.2f}", className="text-primary mb-0")
+                    ])
+                ], width=6, md=4),
+                dbc.Col([
+                    html.Div([
+                        html.H6("Kapazität", className="text-muted mb-1"),
+                        html.H4(f"{firm_data.get('production_capacity', 20000):,.0f}", className="text-primary mb-0")
+                    ])
+                ], width=6, md=4),
+                dbc.Col([
+                    html.Div([
+                        html.H6("Marketing", className="text-muted mb-1"),
+                        html.H4(f"€{firm_data.get('marketing_budget', 30000):,.0f}", className="text-primary mb-0")
+                    ])
+                ], width=6, md=4),
+            ], className="mb-3"),
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        html.H6("F&E Budget", className="text-muted mb-1"),
+                        html.H4(f"€{firm_data.get('rd_budget', 0):,.0f}", className="text-primary mb-0")
+                    ])
+                ], width=6, md=4),
+                dbc.Col([
+                    html.Div([
+                        html.H6("Qualität", className="text-muted mb-1"),
+                        html.H4(f"Level {firm_data.get('quality_level', 5)}/10", className="text-primary mb-0")
+                    ])
+                ], width=6, md=4),
+                dbc.Col([
+                    html.Div([
+                        html.H6("JIT Safety Stock", className="text-muted mb-1"),
+                        html.H4(f"{firm_data.get('safety_stock_percentage', 20):.0f}%", className="text-primary mb-0")
+                    ])
+                ], width=6, md=4),
+            ])
+        ])
+    ], className="shadow-sm mb-4 border-success border-2")
+
+
 def create_decision_form(firm_data):
     """Entscheidungs-Formular"""
     return dbc.Card([
         dbc.CardHeader(html.H5([
             html.I(className="fas fa-cogs me-2"),
-            "Geschäftsentscheidungen - Alle Parameter"
+            "Neue Entscheidungen eingeben (wirksam ab nächstem Quartal)"
         ])),
         dbc.CardBody([
             # Produktpreis
@@ -490,6 +542,9 @@ def create_dashboard_layout(firm_id, firm_data):
 
             dbc.Row([
                 dbc.Col([
+                    # Aktuelle Einstellungen (prominent, live-update)
+                    html.Div(id="current-settings-container", children=create_current_settings_card(firm_data)),
+
                     # Produktion & Lagerbestand Live-Anzeige
                     create_production_inventory_status(firm_data),
 
@@ -696,6 +751,7 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
 @app.callback(
     [Output("quarter-timer", "children"),
      Output("kpi-container", "children"),
+     Output("current-settings-container", "children"),
      Output("market-overview-container", "children"),
      Output("live-status-display", "children"),
      Output("connection-status", "className"),
@@ -710,6 +766,7 @@ def live_update_dashboard(n, firm_id, historical_data):
     if not firm_id:
         return (
             "Keine Firma",
+            dash.no_update,
             dash.no_update,
             dash.no_update,
             dash.no_update,
@@ -740,6 +797,9 @@ def live_update_dashboard(n, firm_id, historical_data):
 
         # Update KPIs
         kpis = create_dashboard_kpis(firm_data)
+
+        # Update current settings card
+        current_settings = create_current_settings_card(firm_data)
 
         # Update market table
         market_table = create_market_table(market_data)
@@ -801,6 +861,7 @@ def live_update_dashboard(n, firm_id, historical_data):
         return (
             timer_text,
             kpis,
+            current_settings,
             market_table,
             live_status,
             "fas fa-circle text-success me-2",
@@ -811,6 +872,7 @@ def live_update_dashboard(n, firm_id, historical_data):
     except Exception as e:
         return (
             "Verbindung zum Server...",
+            dash.no_update,
             dash.no_update,
             dash.no_update,
             dash.no_update,
