@@ -1,0 +1,10 @@
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
+plotly>=5.18.0
+pydantic>=2.6.0
+sqlalchemy>=2.0.25
+python-multipart>=0.0.9
+websockets>=12.0
+requests>=2.31.0
