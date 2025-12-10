@@ -221,25 +221,33 @@ def create_decision_form(firm_data):
             # Produktpreis
             dbc.Row([
                 dbc.Col([
-                    html.Label(f"Produktpreis (€50-€500)"),
+                    html.Label([
+                        "Produktpreis ",
+                        html.Span("(Min: €50, Max: €500)", className="text-danger fw-bold")
+                    ]),
                     html.P(f"Aktuell: €{firm_data.get('product_price', 120):.2f}", className="small text-muted mb-1"),
                     dbc.Input(
                         id="input-price",
                         type="number",
                         value=firm_data.get('product_price', 120),
-                        min=50, max=500, step=0.01
+                        min=50, max=500, step=0.01,
+                        className="border-primary"
                     )
                 ], width=12, md=6, className="mb-3"),
 
                 # Produktionskapazität
                 dbc.Col([
-                    html.Label("Produktionskapazität (Einheiten)"),
+                    html.Label([
+                        "Produktionskapazität ",
+                        html.Span("(Max: 120.000)", className="text-danger fw-bold")
+                    ]),
                     html.P(f"Aktuell: {firm_data.get('production_capacity', 20000):.0f} Einheiten", className="small text-muted mb-1"),
                     dbc.Input(
                         id="input-capacity",
                         type="number",
                         value=firm_data.get('production_capacity', 20000),
-                        min=0, max=120000, step=1000
+                        min=0, max=120000, step=1000,
+                        className="border-primary"
                     )
                 ], width=12, md=6, className="mb-3"),
             ]),
@@ -247,25 +255,37 @@ def create_decision_form(firm_data):
             # Marketing Budget
             dbc.Row([
                 dbc.Col([
-                    html.Label("Marketing Budget (€)"),
-                    html.P(f"Aktuell: €{firm_data.get('marketing_budget', 30000):,.0f} (Max: 30% von Cash)", className="small text-muted mb-1"),
+                    html.Label([
+                        "Marketing Budget ",
+                        html.Span(f"(Max: €{firm_data.get('cash', 0) * 0.3:,.0f})", className="text-danger fw-bold")
+                    ]),
+                    html.P(f"Aktuell: €{firm_data.get('marketing_budget', 30000):,.0f} | Limit: 30% von Cash", className="small text-muted mb-1"),
                     dbc.Input(
                         id="input-marketing",
                         type="number",
                         value=firm_data.get('marketing_budget', 30000),
-                        min=0, step=1000
+                        min=0,
+                        max=firm_data.get('cash', 0) * 0.3,
+                        step=1000,
+                        className="border-warning"
                     )
                 ], width=12, md=6, className="mb-3"),
 
                 # F&E Budget
                 dbc.Col([
-                    html.Label("F&E Budget (€)"),
-                    html.P(f"Aktuell: €{firm_data.get('rd_budget', 0):,.0f} (Max: 20% von Cash)", className="small text-muted mb-1"),
+                    html.Label([
+                        "F&E Budget ",
+                        html.Span(f"(Max: €{firm_data.get('cash', 0) * 0.2:,.0f})", className="text-danger fw-bold")
+                    ]),
+                    html.P(f"Aktuell: €{firm_data.get('rd_budget', 0):,.0f} | Limit: 20% von Cash", className="small text-muted mb-1"),
                     dbc.Input(
                         id="input-rd",
                         type="number",
                         value=firm_data.get('rd_budget', 0),
-                        min=0, step=1000
+                        min=0,
+                        max=firm_data.get('cash', 0) * 0.2,
+                        step=1000,
+                        className="border-warning"
                     )
                 ], width=12, md=6, className="mb-3"),
             ]),
@@ -727,8 +747,55 @@ def join_firm(n_clicks, user_name, firm_id):
     prevent_initial_call=True
 )
 def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, jit):
-    """Submit decision callback"""
+    """Submit decision callback mit Validierung"""
+    # Hole aktuelle Firma für Validierung
     try:
+        firm_response = requests.get(f"{API_URL}/api/firms/{firm_id}", timeout=2)
+        firm_data = firm_response.json()
+        cash = firm_data.get('cash', 0)
+
+        # VALIDIERUNG
+        errors = []
+
+        # Preis Validierung
+        if price is None or price < 50 or price > 500:
+            errors.append("Produktpreis muss zwischen €50 und €500 liegen")
+
+        # Kapazität Validierung
+        if capacity is None or capacity < 0 or capacity > 120000:
+            errors.append("Produktionskapazität muss zwischen 0 und 120.000 Einheiten liegen")
+
+        # Marketing Validierung
+        max_marketing = cash * 0.3
+        if marketing is None or marketing < 0:
+            errors.append("Marketing Budget muss mindestens 0€ sein")
+        elif marketing > max_marketing:
+            errors.append(f"Marketing Budget zu hoch! Maximum: €{max_marketing:,.0f} (30% von Cash)")
+
+        # F&E Validierung
+        max_rd = cash * 0.2
+        if rd is None or rd < 0:
+            errors.append("F&E Budget muss mindestens 0€ sein")
+        elif rd > max_rd:
+            errors.append(f"F&E Budget zu hoch! Maximum: €{max_rd:,.0f} (20% von Cash)")
+
+        # Qualität Validierung
+        if quality is None or quality < 1 or quality > 10:
+            errors.append("Qualitätslevel muss zwischen 1 und 10 liegen")
+
+        # JIT Validierung
+        if jit is None or jit < 0 or jit > 100:
+            errors.append("JIT Safety Stock muss zwischen 0% und 100% liegen")
+
+        # Wenn Fehler, zeige alle
+        if errors:
+            error_msg = html.Div([
+                html.H6("Validierungsfehler:", className="text-danger mb-2"),
+                html.Ul([html.Li(err) for err in errors])
+            ])
+            return dbc.Alert(error_msg, color="danger", dismissable=True)
+
+        # Alle Validierungen bestanden - Submit
         response = requests.post(
             f"{API_URL}/api/firms/{firm_id}/decision",
             json={
@@ -741,7 +808,11 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
             }
         )
         if response.status_code == 200:
-            return dbc.Alert("Entscheidungen erfolgreich gespeichert!", color="success", dismissable=True)
+            success_msg = html.Div([
+                html.H6("Erfolgreich gespeichert!", className="text-success mb-2"),
+                html.P("Deine Entscheidungen werden im nächsten Quartal wirksam.", className="mb-0")
+            ])
+            return dbc.Alert(success_msg, color="success", dismissable=True, duration=4000)
         else:
             return dbc.Alert(f"Fehler: {response.json().get('detail', 'Unbekannt')}", color="danger")
     except Exception as e:
