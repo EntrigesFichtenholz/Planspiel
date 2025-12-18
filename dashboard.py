@@ -4,7 +4,7 @@ Nutzt fertige Dash Bootstrap Components
 """
 import os
 import dash
-from dash import dcc, html, Input, Output, State, callback_context
+from dash import dcc, html, Input, Output, State, callback_context, ALL
 import dash_bootstrap_components as dbc
 import plotly.graph_objs as go
 import requests
@@ -21,6 +21,12 @@ app = dash.Dash(
 )
 
 app.title = "BWL Planspiel"
+
+# ============ HELPER FUNCTIONS ============
+
+def format_de(value):
+    """Formatiert Zahlen im deutschen Format (1.000.000 statt 1,000,000)"""
+    return f"{value:,.0f}".replace(",", ".")
 
 # ============ LAYOUT COMPONENTS ============
 
@@ -120,7 +126,7 @@ def create_dashboard_kpis(firm_data):
             dbc.Card([
                 dbc.CardBody([
                     html.H6("Bargeld", className="text-muted mb-1"),
-                    html.H3(f"€{firm_data.get('cash', 0):,.0f}", className="mb-0"),
+                    html.H3(f"€{format_de(firm_data.get('cash', 0))}", className="mb-0"),
                     html.Small("Aktuell verfügbar", className="text-muted")
                 ])
             ], className="shadow-sm")
@@ -176,13 +182,13 @@ def create_current_settings_card(firm_data):
                 dbc.Col([
                     html.Div([
                         html.H6("Kapazität", className="text-muted mb-1"),
-                        html.H4(f"{firm_data.get('production_capacity', 20000):,.0f}", className="text-primary mb-0")
+                        html.H4(f"{format_de(firm_data.get('production_capacity', 20000))}", className="text-primary mb-0")
                     ])
                 ], width=6, md=4),
                 dbc.Col([
                     html.Div([
                         html.H6("Marketing", className="text-muted mb-1"),
-                        html.H4(f"€{firm_data.get('marketing_budget', 30000):,.0f}", className="text-primary mb-0")
+                        html.H4(f"€{format_de(firm_data.get('marketing_budget', 30000))}", className="text-primary mb-0")
                     ])
                 ], width=6, md=4),
             ], className="mb-3"),
@@ -190,7 +196,7 @@ def create_current_settings_card(firm_data):
                 dbc.Col([
                     html.Div([
                         html.H6("F&E Budget", className="text-muted mb-1"),
-                        html.H4(f"€{firm_data.get('rd_budget', 0):,.0f}", className="text-primary mb-0")
+                        html.H4(f"€{format_de(firm_data.get('rd_budget', 0))}", className="text-primary mb-0")
                     ])
                 ], width=6, md=4),
                 dbc.Col([
@@ -212,6 +218,9 @@ def create_current_settings_card(firm_data):
 
 def create_decision_form(firm_data):
     """Entscheidungs-Formular"""
+    cash = firm_data.get('cash', 0)
+    depr_rates = firm_data.get('depreciation_rates', {})
+
     return dbc.Card([
         dbc.CardHeader(html.H5([
             html.I(className="fas fa-cogs me-2"),
@@ -246,7 +255,7 @@ def create_decision_form(firm_data):
                         id="input-capacity",
                         type="number",
                         value=firm_data.get('production_capacity', 20000),
-                        min=0, max=120000, step=1000,
+                        min=0, max=500000, step=1000,  # Erhöht auf 500k (nach Aufkäufen möglich)
                         className="border-primary"
                     )
                 ], width=12, md=6, className="mb-3"),
@@ -257,16 +266,15 @@ def create_decision_form(firm_data):
                 dbc.Col([
                     html.Label([
                         "Marketing Budget ",
-                        html.Span(f"(Max: €{firm_data.get('cash', 0) * 0.3:,.0f})", className="text-danger fw-bold")
+                        html.Span(f"(Max: €{format_de(firm_data.get('cash', 0) * 0.3)})", className="text-danger fw-bold")
                     ]),
-                    html.P(f"Aktuell: €{firm_data.get('marketing_budget', 30000):,.0f} | Limit: 30% von Cash", className="small text-muted mb-1"),
+                    html.P(f"Aktuell: €{format_de(firm_data.get('marketing_budget', 30000))} | Limit: 30% von Cash", className="small text-muted mb-1"),
                     dbc.Input(
                         id="input-marketing",
                         type="number",
                         value=firm_data.get('marketing_budget', 30000),
                         min=0,
-                        max=firm_data.get('cash', 0) * 0.3,
-                        step=1000,
+                        step=1,
                         className="border-warning"
                     )
                 ], width=12, md=6, className="mb-3"),
@@ -275,16 +283,15 @@ def create_decision_form(firm_data):
                 dbc.Col([
                     html.Label([
                         "F&E Budget ",
-                        html.Span(f"(Max: €{firm_data.get('cash', 0) * 0.2:,.0f})", className="text-danger fw-bold")
+                        html.Span(f"(Max: €{format_de(firm_data.get('cash', 0) * 0.2)})", className="text-danger fw-bold")
                     ]),
-                    html.P(f"Aktuell: €{firm_data.get('rd_budget', 0):,.0f} | Limit: 20% von Cash", className="small text-muted mb-1"),
+                    html.P(f"Aktuell: €{format_de(firm_data.get('rd_budget', 0))} | Limit: 20% von Cash", className="small text-muted mb-1"),
                     dbc.Input(
                         id="input-rd",
                         type="number",
                         value=firm_data.get('rd_budget', 0),
                         min=0,
-                        max=firm_data.get('cash', 0) * 0.2,
-                        step=1000,
+                        step=1,
                         className="border-warning"
                     )
                 ], width=12, md=6, className="mb-3"),
@@ -316,6 +323,85 @@ def create_decision_form(firm_data):
                     )
                 ], width=12, md=6, className="mb-3"),
             ]),
+
+            html.H6("Kostenoptimierungs-Investitionen", className="mt-4 mb-3"),
+
+            # Prozessoptimierung
+            html.Label("Prozessoptimierung (€5M → -5% variable Kosten)"),
+            dbc.Input(
+                id="input-process-opt",
+                type="number",
+                value=0,
+                min=0,
+                step=1,
+                className="mb-2"
+            ),
+            html.Small(f"Max: 10% von Cash = €{format_de(cash * 0.1)}", className="text-muted d-block mb-3"),
+
+            # Lieferantenverhandlungen
+            html.Label("Lieferantenverhandlungen (€3M → -5% Materialkosten)"),
+            dbc.Input(
+                id="input-supplier-neg",
+                type="number",
+                value=0,
+                min=0,
+                step=1,
+                className="mb-2"
+            ),
+            html.Small(f"Max: 10% von Cash", className="text-muted d-block mb-3"),
+
+            # Verwaltungsoptimierung
+            html.Label("Verwaltungsoptimierung (€4M → -10% Overhead)"),
+            dbc.Input(
+                id="input-overhead-red",
+                type="number",
+                value=0,
+                min=0,
+                step=1,
+                className="mb-2"
+            ),
+            html.Small(f"Max: 10% von Cash", className="text-muted d-block mb-3"),
+
+            html.H6("Abschreibungsraten anpassen (in % pro Quartal)", className="mt-4 mb-3"),
+
+            # Gebäude
+            html.Label("AfA-Rate Gebäude (%)"),
+            dbc.Input(
+                id="input-buildings-depr",
+                type="number",
+                value=depr_rates.get('buildings', 0.5),
+                min=0.1,
+                max=5.0,
+                step=0.1,
+                className="mb-2"
+            ),
+            html.Small(f"Aktuell: {depr_rates.get('buildings', 0.5):.2f}% (0.1% - 5.0%)", className="text-muted d-block mb-3"),
+
+            # Maschinen
+            html.Label("AfA-Rate Maschinen (%)"),
+            dbc.Input(
+                id="input-machines-depr",
+                type="number",
+                value=depr_rates.get('machines', 1.0),
+                min=0.1,
+                max=5.0,
+                step=0.1,
+                className="mb-2"
+            ),
+            html.Small(f"Aktuell: {depr_rates.get('machines', 1.0):.2f}%", className="text-muted d-block mb-3"),
+
+            # Ausstattung
+            html.Label("AfA-Rate Ausstattung (%)"),
+            dbc.Input(
+                id="input-equipment-depr",
+                type="number",
+                value=depr_rates.get('equipment', 1.0),
+                min=0.1,
+                max=5.0,
+                step=0.1,
+                className="mb-2"
+            ),
+            html.Small(f"Aktuell: {depr_rates.get('equipment', 1.0):.2f}%", className="text-muted d-block mb-3"),
 
             dbc.Button(
                 [html.I(className="fas fa-check me-2"), "Entscheidungen Anwenden"],
@@ -382,8 +468,9 @@ def create_cost_info():
     ], className="shadow-sm mb-4")
 
 
-def create_market_table(market_data):
-    """Marktübersicht Tabelle"""
+def create_market_table(market_data, current_firm_id=None):
+    """Marktübersicht Tabelle (ohne Buttons - M&A über separates Interface)"""
+
     return dbc.Card([
         dbc.CardHeader(html.H5([
             html.I(className="fas fa-chart-line me-2"),
@@ -404,10 +491,10 @@ def create_market_table(market_data):
                     html.Tr([
                         html.Td(f"#{firm['rank']}"),
                         html.Td(firm['name']),
-                        html.Td(", ".join(firm['user_names'])),  # Show all users
+                        html.Td(", ".join(firm['user_names'])),
                         html.Td(f"{firm['market_share']:.2f}%"),
-                        html.Td(f"€{firm['revenue']:,.0f}"),
-                        html.Td(f"€{firm['profit']:,.0f}"),
+                        html.Td(f"€{format_de(firm['revenue'])}"),
+                        html.Td(f"€{format_de(firm['profit'])}"),
                         html.Td(f"{firm['roi']:.1f}%"),
                     ]) for firm in market_data.get('firms', [])
                 ])
@@ -465,7 +552,7 @@ def create_production_inventory_status(firm_data):
     production_bar = go.Figure(go.Bar(
         x=['Kapazität'],
         y=[capacity],
-        text=[f'{capacity:,.0f} Einheiten'],
+        text=[f'{format_de(capacity)} Einheiten'],
         textposition='auto',
         marker_color='steelblue'
     ))
@@ -491,31 +578,1074 @@ def create_production_inventory_status(firm_data):
                 ], width=12, md=6),
                 dbc.Col([
                     html.Div([
-                        html.H6("Live-Status (Auto-Update)", className="text-muted mb-3"),
+                        html.H6("Produktionsmetriken (Quartal)", className="text-muted mb-3"),
                         html.Div(id="live-status-display", children=[
                             html.P([
-                                html.Strong("Produktpreis: "),
-                                f"€{firm_data.get('product_price', 0):.2f}"
+                                html.Strong("Produzierte Einheiten: "),
+                                html.Span(f"{format_de(firm_data.get('production_capacity', 0))} Stück", className="text-primary")
                             ], className="mb-2"),
                             html.P([
-                                html.Strong("Produktionskapazität: "),
-                                f"{firm_data.get('production_capacity', 0):,.0f} Einheiten"
+                                html.Strong("Verkaufte Einheiten: "),
+                                html.Span(f"{format_de(firm_data.get('units_sold', 0))} Stück", className="text-success")
+                            ], className="mb-2"),
+                            html.P([
+                                html.Strong("Kapazitätsauslastung: "),
+                                html.Span(f"{firm_data.get('efficiency_ratios', {}).get('capacity_utilization', 0):.1f}%", className="text-info")
                             ], className="mb-2"),
                             html.P([
                                 html.Strong("Lagerbestand: "),
-                                f"{firm_data.get('inventory_level', 0):,.0f} Einheiten"
+                                f"{format_de(firm_data.get('inventory_level', 0))} Einheiten"
                             ], className="mb-2"),
                             html.P([
-                                html.Strong("JIT-Effizienz: "),
-                                f"{firm_data.get('safety_stock_percentage', 0):.1f}%"
-                            ], className="mb-2"),
-                            html.P([
-                                html.Strong("Marketing Budget: "),
-                                f"€{firm_data.get('marketing_budget', 0):,.0f}"
+                                html.Strong("Lagerumschlag: "),
+                                f"{firm_data.get('efficiency_ratios', {}).get('inventory_turnover', 0):.2f}x"
                             ], className="mb-2"),
                         ])
                     ])
                 ], width=12, md=6),
+            ])
+        ])
+    ], className="shadow-sm mb-4")
+
+
+def create_market_volume_card():
+    """Marktvolumen-Übersicht"""
+    try:
+        response = requests.get(f"{API_URL}/api/market", timeout=2)
+        market_data = response.json()
+
+        firms = market_data.get('firms', [])
+        total_market_volume = sum(f.get('revenue', 0) for f in firms)
+        num_competitors = len(firms)
+
+        # Calculate market growth (would need historical data, for now show current volume)
+        avg_revenue_per_firm = total_market_volume / num_competitors if num_competitors > 0 else 0
+
+        return dbc.Card([
+            dbc.CardHeader(html.H5([
+                html.I(className="fas fa-chart-line me-2"),
+                "Gesamtmarkt-Übersicht"
+            ])),
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            html.H6("Marktvolumen Gesamt", className="text-muted mb-1"),
+                            html.H3(f"€{format_de(total_market_volume)}", className="text-success mb-0")
+                        ])
+                    ], width=12, md=4, className="mb-3"),
+                    dbc.Col([
+                        html.Div([
+                            html.H6("Anzahl Wettbewerber", className="text-muted mb-1"),
+                            html.H3(f"{num_competitors}", className="text-info mb-0")
+                        ])
+                    ], width=12, md=4, className="mb-3"),
+                    dbc.Col([
+                        html.Div([
+                            html.H6("Ø Umsatz pro Firma", className="text-muted mb-1"),
+                            html.H3(f"€{format_de(avg_revenue_per_firm)}", className="text-warning mb-0")
+                        ])
+                    ], width=12, md=4, className="mb-3"),
+                ])
+            ])
+        ], className="shadow-sm mb-4")
+    except Exception as e:
+        return dbc.Alert(f"Marktdaten konnten nicht geladen werden: {str(e)}", color="warning")
+
+
+def create_market_volume_graph():
+    """Marktvolumen über Zeit - Zeigt Gesamtmarktentwicklung"""
+    try:
+        # Hole alle Firmen mit History
+        response = requests.get(f"{API_URL}/api/firms", timeout=2)
+        if response.status_code != 200:
+            return dbc.Alert("Marktdaten nicht verfügbar", color="warning", className="mb-4")
+
+        data = response.json()
+        firms = data.get('firms', [])
+
+        # Sammle alle Quarter-Revenue Daten von allen Firmen
+        all_quarters = set()
+        firm_histories = {}
+
+        for firm in firms:
+            try:
+                firm_response = requests.get(f"{API_URL}/api/firms/{firm['id']}", timeout=2)
+                firm_data = firm_response.json()
+                history = firm_data.get('history', [])
+
+                if history:
+                    firm_histories[firm['name']] = {h['quarter']: h['revenue'] for h in history}
+                    all_quarters.update(h['quarter'] for h in history)
+            except:
+                continue
+
+        if not all_quarters:
+            return dbc.Alert("Noch keine historischen Daten verfügbar", color="info", className="mb-4")
+
+        # Sortiere Quartale
+        quarters = sorted(list(all_quarters))
+
+        # Berechne Gesamtmarktvolumen pro Quartal
+        total_market_volumes = []
+        for q in quarters:
+            total = sum(firm_histories[firm_name].get(q, 0) for firm_name in firm_histories)
+            total_market_volumes.append(total)
+
+        # Erstelle Plotly Line Chart
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=quarters,
+            y=total_market_volumes,
+            mode='lines+markers',
+            name='Gesamtmarktvolumen',
+            line=dict(color='steelblue', width=3),
+            marker=dict(size=10, color='steelblue'),
+            fill='tozeroy',
+            fillcolor='rgba(70, 130, 180, 0.2)'
+        ))
+
+        fig.update_layout(
+            height=300,
+            margin=dict(l=40, r=40, t=40, b=40),
+            xaxis_title="Quartal",
+            yaxis_title="Marktvolumen (€)",
+            hovermode='x unified',
+            showlegend=False
+        )
+
+        return dbc.Card([
+            dbc.CardHeader(html.H5([
+                html.I(className="fas fa-chart-area me-2"),
+                "Marktvolumen-Entwicklung"
+            ])),
+            dbc.CardBody([
+                dcc.Graph(
+                    figure=fig,
+                    config={'displayModeBar': False}
+                )
+            ])
+        ], className="shadow-sm mb-4")
+
+    except Exception as e:
+        return dbc.Alert(f"Fehler beim Laden der Marktdaten: {str(e)}", color="danger", className="mb-4")
+
+
+def create_cost_structure_card(firm_data):
+    """Kostenstruktur & Spielmechanik - Detaillierte Ansicht wie in PDF"""
+    costs = firm_data.get('costs', {})
+    efficiency = firm_data.get('efficiency_factors', {})
+    depr_rates = firm_data.get('depreciation_rates', {})
+    assets = firm_data.get('assets', {})
+
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-calculator me-2"),
+            "Kostenstruktur & Spielmechanik (BWL-Planspiel)"
+        ])),
+        dbc.CardBody([
+            # Fixkosten pro Quartal
+            html.H6("Fixkosten pro Quartal:", className="text-primary fw-bold mb-3"),
+            dbc.Alert([
+                html.Strong("Abschreibungen: "),
+                f"{format_de(costs.get('depreciation', 0))}/Q (AfA Geb\u00e4ude: {format_de(costs.get('depreciation_buildings', 0))}, "
+                f"Maschinen: {format_de(costs.get('depreciation_machines', 0))}, "
+                f"Ausstattung: {format_de(costs.get('depreciation_equipment', 0))})",
+                html.Br(),
+                html.Small([
+                    f"Raten: Geb\u00e4ude {depr_rates.get('buildings', 0.5):.2f}%, "
+                    f"Maschinen {depr_rates.get('machines', 1.0):.2f}%, "
+                    f"Ausstattung {depr_rates.get('equipment', 1.0):.2f}%"
+                ], className="text-muted")
+            ], color="info", className="mb-2"),
+
+            dbc.Alert([
+                html.Strong("Zinsen auf FK: "),
+                f"{format_de(costs.get('interest', 0))}/Q (10% p.a. = 2.5% p.Q.)"
+            ], color="info", className="mb-3"),
+
+            # Variable Kosten
+            html.H6("Variable Kosten:", className="text-primary fw-bold mb-3"),
+            dbc.Alert([
+                html.Strong("Materialkosten: "),
+                f"~{format_de(costs.get('variable', 0) * 0.6)}/Q bei aktueller Produktion",
+                html.Br(),
+                html.Small([
+                    f"Effizienz: {efficiency.get('material_cost_savings_percent', 0):.1f}% Einsparung "
+                    f"(Faktor: {efficiency.get('material_cost_reduction', 1.0):.3f})"
+                ], className="text-success" if efficiency.get('material_cost_savings_percent', 0) > 0 else "text-muted")
+            ], color="light", className="mb-2"),
+
+            dbc.Alert([
+                html.Strong("Produktionskosten: "),
+                f"Abh\u00e4ngig von Kapazit\u00e4tsauslastung (~{format_de(costs.get('variable', 0) * 0.4)}/Q)",
+                html.Br(),
+                html.Small([
+                    f"Effizienz: {efficiency.get('variable_cost_savings_percent', 0):.1f}% Einsparung "
+                    f"(Faktor: {efficiency.get('variable_cost_efficiency', 1.0):.3f})"
+                ], className="text-success" if efficiency.get('variable_cost_savings_percent', 0) > 0 else "text-muted")
+            ], color="light", className="mb-2"),
+
+            dbc.Alert([
+                html.Strong("Lagerkosten: "),
+                f"{format_de(costs.get('inventory', 0))}/Q (2.0% des Lagerwertes pro Quartal)"
+            ], color="light", className="mb-3"),
+
+            dbc.Alert([
+                html.Strong("Gemeinkosten: "),
+                f"{format_de(costs.get('overhead', 0))}/Q",
+                html.Br(),
+                html.Small([
+                    f"Effizienz: {efficiency.get('overhead_savings_percent', 0):.1f}% Einsparung "
+                    f"(Faktor: {efficiency.get('overhead_efficiency', 1.0):.3f})"
+                ], className="text-success" if efficiency.get('overhead_savings_percent', 0) > 0 else "text-muted")
+            ], color="light", className="mb-3"),
+
+            # Investitionen & Effekte
+            html.H6("Investitionen & Effekte:", className="text-primary fw-bold mb-3"),
+            dbc.Alert([
+                html.Strong("Marketing-Effizienz: "),
+                f"1M \u2192 +0.5% Marktanteil (logarithmische S\u00e4ttigung ab 50M)",
+                html.Br(),
+                html.Small(f"Aktuelles Budget: {format_de(costs.get('marketing', 0))}/Q", className="text-muted")
+            ], color="success", className="mb-2"),
+
+            dbc.Alert([
+                html.Strong("F&E-Mechanik: "),
+                f"Qualit\u00e4t Level {firm_data.get('quality_level', 5)}/10 \u2192 Preispremium +0-25%",
+                html.Br(),
+                html.Small("Level 6 kostet 12.000.000", className="text-muted")
+            ], color="success", className="mb-2"),
+
+            # JIT-Strategie
+            html.H6("JIT-Strategie & Risikomanagement:", className="text-primary fw-bold mb-3"),
+            dbc.Alert([
+                html.Strong(f"Sicherheitsbestand {firm_data.get('safety_stock_percentage', 20):.1f}%: "),
+                "Lagerkosten vs. Lieferrisiko",
+                html.Br(),
+                html.Small("Bei 0% Safety Stock: Umsatzverlust m\u00f6glich", className="text-warning"),
+                html.Br(),
+                html.Small("10-15% Safety Stock = Best Practice", className="text-success")
+            ], color="warning", className="mb-3"),
+
+            # Preisoptimierung
+            html.H6("Preisoptimierung:", className="text-primary fw-bold mb-3"),
+            dbc.Alert([
+                html.Strong("Marktpreis: "),
+                "100 (Basis)",
+                html.Br(),
+                html.Strong("Preis-Absatz-Funktion: "),
+                "+10% Preis \u2192 -15% Absatz (elastisch)",
+                html.Br(),
+                html.Strong("Qualit\u00e4tspr\u00e4mie: "),
+                f"Level {firm_data.get('quality_level', 5)} \u2192 bis +{firm_data.get('quality_level', 5) * 1.25:.1f}% Preisaufschlag"
+            ], color="info", className="mb-2"),
+
+        ])
+    ], className="shadow-sm mb-4")
+
+
+def create_shares_overview_card(firm_data):
+    """Aktien-Übersicht & Eigentümerstruktur"""
+    m_and_a = firm_data.get('m_and_a', {})
+    shares = m_and_a.get('shares', {})
+    is_public = m_and_a.get('is_public', False)
+    enterprise_value = m_and_a.get('enterprise_value', 0)
+    major_shareholder = m_and_a.get('major_shareholder', 'Unbekannt')
+
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-chart-pie me-2"),
+            "Aktien & Eigentümerstruktur"
+        ])),
+        dbc.CardBody([
+            # Status
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        html.H6("Unternehmenswert", className="text-muted mb-1"),
+                        html.H4(f"€{format_de(enterprise_value)}", className="text-success mb-0")
+                    ])
+                ], width=6, className="mb-3"),
+                dbc.Col([
+                    html.Div([
+                        html.H6("Status", className="text-muted mb-1"),
+                        html.H4(
+                            "Börsennotiert" if is_public else "Privat",
+                            className="text-info mb-0"
+                        )
+                    ])
+                ], width=6, className="mb-3"),
+            ]),
+
+            # Eigentümerstruktur
+            html.H6("Eigentümerstruktur:", className="text-primary fw-bold mb-3 mt-3"),
+
+            # Shares als Balken-Diagramm
+            html.Div([
+                html.Div([
+                    html.Div([
+                        html.Strong(f"{owner}: "),
+                        html.Span(f"{percentage:.1f}%", className="text-success ms-2")
+                    ], className="d-flex justify-content-between mb-2"),
+                    dbc.Progress(
+                        value=percentage,
+                        max=100,
+                        color="success" if percentage >= 50 else "info",
+                        className="mb-3",
+                        style={"height": "25px"}
+                    )
+                ]) for owner, percentage in sorted(shares.items(), key=lambda x: x[1], reverse=True)
+            ] if shares else [html.P("Keine Eigentümer definiert", className="text-muted")]),
+
+            # Mehrheitsaktionär
+            html.Div([
+                html.Hr(),
+                html.P([
+                    html.Strong("Mehrheitsaktionär: "),
+                    html.Span(major_shareholder, className="text-primary")
+                ], className="mb-0")
+            ])
+        ])
+    ], className="shadow-sm mb-4")
+
+
+def create_acquisition_card(firm_id):
+    """M&A - Unternehmensübernahme Interface"""
+    try:
+        # Hole alle verfügbaren Firmen
+        response = requests.get(f"{API_URL}/api/firms", timeout=2)
+        firms_data = response.json()
+        firms = firms_data.get('firms', [])
+
+        # Filtere eigene Firma aus
+        target_firms = [f for f in firms if f['id'] != firm_id]
+
+        return dbc.Card([
+            dbc.CardHeader(html.H5([
+                html.I(className="fas fa-handshake me-2"),
+                "M&A - Unternehmensübernahme"
+            ])),
+            dbc.CardBody([
+                html.P("Übernehmen Sie andere Firmen (Kartellamt prüft automatisch)", className="text-muted mb-3"),
+
+                # Ziel-Firma auswählen
+                html.Label("Ziel-Firma auswählen:"),
+                dbc.Select(
+                    id="acquisition-target-select",
+                    options=[
+                        {"label": f"{f['name']} (Marktanteil: {f['market_share']:.1f}%)", "value": f['id']}
+                        for f in target_firms
+                    ],
+                    value=target_firms[0]['id'] if target_firms else None,
+                    className="mb-3"
+                ),
+
+                # Anteil wählen
+                html.Label("Anteil kaufen (%):"),
+                dbc.Input(
+                    id="acquisition-percentage",
+                    type="number",
+                    min=1,
+                    max=100,
+                    step=1,
+                    value=51,
+                    className="mb-3"
+                ),
+
+                # Bewertung anzeigen Button
+                dbc.Button(
+                    [html.I(className="fas fa-calculator me-2"), "Bewertung berechnen"],
+                    id="btn-calculate-valuation",
+                    color="info",
+                    className="w-100 mb-3"
+                ),
+
+                # Bewertungs-Ergebnis
+                html.Div(id="valuation-result", className="mb-3"),
+
+                # Kartellamt-Prüfung
+                html.Div(id="antitrust-check", className="mb-3"),
+
+                # Übernahme durchführen Button
+                dbc.Button(
+                    [html.I(className="fas fa-gavel me-2"), "Übernahme durchführen"],
+                    id="btn-execute-acquisition",
+                    color="warning",
+                    className="w-100",
+                    disabled=True
+                ),
+
+                # Ergebnis
+                html.Div(id="acquisition-result", className="mt-3")
+            ])
+        ], className="shadow-sm mb-4")
+    except Exception as e:
+        return dbc.Alert(f"Fehler beim Laden der M&A-Daten: {str(e)}", color="danger", className="mb-4")
+
+
+def create_machine_upgrade_card(firm_data):
+    """Maschinensystem - Upgrade Interface"""
+    machines = firm_data.get('machines', {})
+    current_class = machines.get('class', 'basic')
+    efficiency = machines.get('efficiency_factor', 0.8)
+    energy_factor = machines.get('energy_cost_factor', 1.2)
+    next_upgrade_cost = machines.get('next_upgrade_cost', 0)
+
+    class_info = {
+        'basic': {'color': 'secondary', 'name': 'Basic Machines', 'next': 'Professional'},
+        'professional': {'color': 'primary', 'name': 'Professional Machines', 'next': 'Premium'},
+        'premium': {'color': 'success', 'name': 'Premium Machines', 'next': None}
+    }
+
+    info = class_info.get(current_class, class_info['basic'])
+
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-industry me-2"),
+            "Maschinen-Upgrade System"
+        ])),
+        dbc.CardBody([
+            dbc.Alert([
+                html.H6("Aktuelle Maschinenklasse:", className="mb-2"),
+                html.H4(info['name'], className=f"text-{info['color']} mb-2"),
+                html.P([
+                    html.Strong("Effizienz: "), f"{efficiency:.2f}x",
+                    html.Br(),
+                    html.Strong("Energiekosten: "), f"{energy_factor:.2f}x"
+                ], className="mb-0")
+            ], color=info['color'], className="mb-3"),
+
+            html.Div([
+                html.H6("Upgrade verfügbar:" if info['next'] else "Maximale Stufe erreicht", className="mb-2"),
+                html.P(f"Nächstes Upgrade: {info['next']}" if info['next'] else "Keine weiteren Upgrades", className="mb-2"),
+                html.P(f"Kosten: €{format_de(next_upgrade_cost)}" if next_upgrade_cost > 0 else "", className="text-warning fw-bold mb-3"),
+
+                dbc.Button(
+                    [html.I(className="fas fa-arrow-up me-2"), f"Upgrade zu {info['next']}"],
+                    id="btn-upgrade-machines",
+                    color="warning",
+                    className="w-100",
+                    disabled=(info['next'] is None)
+                ) if info['next'] else html.P("Alle Upgrades abgeschlossen!", className="text-success"),
+
+                html.Div(id="machine-upgrade-feedback", className="mt-3")
+            ])
+        ])
+    ], className="shadow-sm mb-4")
+
+
+def create_financing_card(firm_data):
+    """Finanzierungs-Interface: Kredite & Eigenkapitalerhöhung"""
+    financing = firm_data.get('financing', {})
+    loans = financing.get('loans', [])
+    total_debt = financing.get('total_debt', 0)
+    max_capacity = financing.get('max_loan_capacity', 5000000)
+    available = financing.get('available_credit', 0)
+    credit_rating = financing.get('credit_rating', 1.0)
+    estimated_rate = financing.get('estimated_interest_rate', 10.0)
+
+    is_public = firm_data.get('m_and_a', {}).get('is_public', False)
+
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-money-bill-wave me-2"),
+            "Finanzierung & Kapitalbeschaffung"
+        ])),
+        dbc.CardBody([
+            # Kreditübersicht
+            html.H6("Kredit-Übersicht:", className="text-primary mb-2"),
+            dbc.Alert([
+                html.P([
+                    html.Strong("Gesamtverschuldung: "), f"€{format_de(total_debt)}"
+                ], className="mb-1"),
+                html.P([
+                    html.Strong("Verfügbares Kreditlimit: "), f"€{format_de(available)}"
+                ], className="mb-1"),
+                html.P([
+                    html.Strong("Bonität: "), f"{credit_rating:.2f} / 1.5"
+                ], className="mb-1"),
+                html.P([
+                    html.Strong("Geschätzter Zinssatz: "), f"{estimated_rate:.1f}% p.a."
+                ], className="mb-0")
+            ], color="info", className="mb-3"),
+
+            # Laufende Kredite
+            html.H6(f"Laufende Kredite ({len(loans)}):", className="mb-2") if loans else html.P("Keine laufenden Kredite", className="text-muted mb-3"),
+
+            html.Div([
+                dbc.Alert([
+                    html.Small(f"Betrag: €{format_de(loan.get('amount', 0))} | Zinssatz: {loan.get('interest_rate', 0)*100:.1f}% p.a. | Restlaufzeit: {loan.get('quarters_remaining', 0)} Q", className="mb-0")
+                ], color="light", className="mb-2")
+                for loan in loans
+            ]) if loans else None,
+
+            html.Hr(),
+
+            # Kredit aufnehmen
+            html.H6("Neuen Kredit aufnehmen:", className="text-primary mb-2"),
+            html.Label("Kreditbetrag (€):"),
+            dbc.Input(
+                id="input-loan-amount",
+                type="number",
+                value=500000,
+                min=100000,
+                max=available,
+                step=100000,
+                className="mb-2"
+            ),
+            html.Small(f"Max: €{format_de(available)}", className="text-muted d-block mb-2"),
+
+            html.Label("Laufzeit (Quartale):"),
+            dbc.Select(
+                id="input-loan-quarters",
+                options=[
+                    {"label": "4 Quartale (1 Jahr)", "value": 4},
+                    {"label": "8 Quartale (2 Jahre)", "value": 8},
+                    {"label": "12 Quartale (3 Jahre)", "value": 12},
+                    {"label": "16 Quartale (4 Jahre)", "value": 16},
+                    {"label": "20 Quartale (5 Jahre)", "value": 20}
+                ],
+                value=12,
+                className="mb-3"
+            ),
+
+            dbc.Button(
+                [html.I(className="fas fa-hand-holding-usd me-2"), "Kredit aufnehmen"],
+                id="btn-take-loan",
+                color="primary",
+                className="w-100 mb-3"
+            ),
+
+            html.Hr(),
+
+            # Eigenkapitalerhöhung
+            html.H6("Eigenkapitalerhöhung:", className="text-primary mb-2"),
+            html.P("Status: " + ("Börsennotiert" if is_public else "Privat"), className="mb-2"),
+
+            html.Label("Kapitalbetrag (€):"),
+            dbc.Input(
+                id="input-shares-amount",
+                type="number",
+                value=1000000,
+                min=500000,
+                max=10000000,
+                step=500000,
+                className="mb-2"
+            ),
+            html.Small("IPO-Kosten: 10% | Capital Raise: 5%", className="text-muted d-block mb-3"),
+
+            dbc.Button(
+                [html.I(className="fas fa-chart-line me-2"), "IPO durchführen" if not is_public else "Kapitalerhöhung"],
+                id="btn-issue-shares",
+                color="success",
+                className="w-100"
+            ),
+
+            html.Div(id="financing-feedback", className="mt-3")
+        ])
+    ], className="shadow-sm mb-4")
+
+
+def create_personnel_card(firm_data):
+    """Personal-Management Interface"""
+    personnel = firm_data.get('personnel', {})
+    total_count = personnel.get('total_count', 0)
+    total_cost = personnel.get('total_cost', 0)
+
+    ungelernt = personnel.get('ungelernt', {})
+    angelernt = personnel.get('angelernt', {})
+    facharbeiter = personnel.get('facharbeiter', {})
+
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-users me-2"),
+            "Personal-Management"
+        ])),
+        dbc.CardBody([
+            dbc.Alert([
+                html.P([
+                    html.Strong("Gesamt-Mitarbeiter: "), f"{total_count}",
+                    html.Br(),
+                    html.Strong("Personalkosten/Quartal: "), f"€{format_de(total_cost)}"
+                ], className="mb-0")
+            ], color="info", className="mb-3"),
+
+            # Personal-Übersicht
+            html.H6("Aktuelle Belegschaft:", className="mb-3"),
+
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H6("Ungelernt", className="text-muted"),
+                            html.H4(f"{ungelernt.get('count', 0)}", className="text-secondary"),
+                            html.Small(f"€{format_de(ungelernt.get('cost_per_quarter', 0))}/Q | {ungelernt.get('productivity', 0):.0%} Produktivität", className="text-muted")
+                        ])
+                    ], className="mb-2")
+                ], width=4),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H6("Angelernt", className="text-muted"),
+                            html.H4(f"{angelernt.get('count', 0)}", className="text-primary"),
+                            html.Small(f"€{format_de(angelernt.get('cost_per_quarter', 0))}/Q | {angelernt.get('productivity', 0):.0%} Produktivität", className="text-muted")
+                        ])
+                    ], className="mb-2")
+                ], width=4),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H6("Facharbeiter", className="text-muted"),
+                            html.H4(f"{facharbeiter.get('count', 0)}", className="text-success"),
+                            html.Small(f"€{format_de(facharbeiter.get('cost_per_quarter', 0))}/Q | {facharbeiter.get('productivity', 0):.0%} Produktivität", className="text-muted")
+                        ])
+                    ], className="mb-2")
+                ], width=4),
+            ]),
+
+            html.Hr(),
+
+            # Personal einstellen
+            html.H6("Personal einstellen:", className="text-success mb-2"),
+            html.Label("Qualifikation:"),
+            dbc.Select(
+                id="input-hire-qualification",
+                options=[
+                    {"label": "Ungelernt (€8k/Q, 70% Produktivität)", "value": "ungelernt"},
+                    {"label": "Angelernt (€12k/Q, 100% Produktivität)", "value": "angelernt"},
+                    {"label": "Facharbeiter (€18k/Q, 140% Produktivität)", "value": "facharbeiter"}
+                ],
+                value="angelernt",
+                className="mb-2"
+            ),
+            html.Label("Anzahl:"),
+            dbc.Input(
+                id="input-hire-count",
+                type="number",
+                value=5,
+                min=1,
+                max=50,
+                step=1,
+                className="mb-3"
+            ),
+            dbc.Button(
+                [html.I(className="fas fa-user-plus me-2"), "Einstellen"],
+                id="btn-hire-personnel",
+                color="success",
+                className="w-100 mb-3"
+            ),
+
+            html.Hr(),
+
+            # Personal entlassen
+            html.H6("Personal entlassen:", className="text-danger mb-2"),
+            html.Label("Qualifikation:"),
+            dbc.Select(
+                id="input-fire-qualification",
+                options=[
+                    {"label": "Ungelernt", "value": "ungelernt"},
+                    {"label": "Angelernt", "value": "angelernt"},
+                    {"label": "Facharbeiter", "value": "facharbeiter"}
+                ],
+                value="ungelernt",
+                className="mb-2"
+            ),
+            html.Label("Anzahl:"),
+            dbc.Input(
+                id="input-fire-count",
+                type="number",
+                value=5,
+                min=1,
+                max=20,
+                step=1,
+                className="mb-3"
+            ),
+            html.Small("Abfindung: 1 Quartalsgehalt", className="text-muted d-block mb-3"),
+            dbc.Button(
+                [html.I(className="fas fa-user-minus me-2"), "Entlassen"],
+                id="btn-fire-personnel",
+                color="danger",
+                className="w-100"
+            ),
+
+            html.Div(id="personnel-feedback", className="mt-3")
+        ])
+    ], className="shadow-sm mb-4")
+
+
+def create_innovation_card(firm_data):
+    """Innovation & Produktlebenszyklus Interface"""
+    product = firm_data.get('product', {})
+    lifecycle_stage = product.get('lifecycle_stage', 'introduction')
+    age_quarters = product.get('age_quarters', 0)
+    innovation_level = product.get('innovation_level', 1)
+    innovation_investment = product.get('innovation_investment', 0)
+    stage_desc = product.get('stage_description', '')
+
+    stage_colors = {
+        'introduction': 'warning',
+        'growth': 'success',
+        'maturity': 'primary',
+        'decline': 'danger'
+    }
+
+    stage_names = {
+        'introduction': 'Einführung',
+        'growth': 'Wachstum',
+        'maturity': 'Reife',
+        'decline': 'Rückgang'
+    }
+
+    color = stage_colors.get(lifecycle_stage, 'secondary')
+    name = stage_names.get(lifecycle_stage, lifecycle_stage)
+
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-lightbulb me-2"),
+            "Innovation & Produktlebenszyklus"
+        ])),
+        dbc.CardBody([
+            dbc.Alert([
+                html.H6("Aktuelles Produkt:", className="mb-2"),
+                html.H4(f"Generation {innovation_level}", className="mb-2"),
+                html.P([
+                    html.Strong("Lebenszyklusphase: "), name,
+                    html.Br(),
+                    html.Strong("Alter: "), f"{age_quarters} Quartale"
+                ], className="mb-0")
+            ], color=color, className="mb-3"),
+
+            html.P(stage_desc, className="mb-3"),
+
+            # Lifecycle-Fortschritt
+            html.H6("Lifecycle-Fortschritt:", className="mb-2"),
+            dbc.Progress(
+                value=min(100, (age_quarters / 25) * 100),
+                label=f"{age_quarters} Q",
+                color=color,
+                className="mb-3",
+                style={"height": "30px"}
+            ),
+
+            html.Hr(),
+
+            # Innovation investieren
+            html.H6("Innovation investieren:", className="text-primary mb-2"),
+            html.P("Bei €5M Investment: Neues Produkt (Generation+1)", className="small text-muted mb-2"),
+
+            dbc.Alert([
+                html.P([
+                    html.Strong("Bereits investiert: "), f"€{format_de(innovation_investment)}",
+                    html.Br(),
+                    html.Strong("Noch benötigt: "), f"€{format_de(max(0, 5000000 - innovation_investment))}"
+                ], className="mb-0")
+            ], color="light", className="mb-3"),
+
+            html.Label("Investment-Betrag (€):"),
+            dbc.Input(
+                id="input-innovation-amount",
+                type="number",
+                value=1000000,
+                min=100000,
+                max=5000000,
+                step=100000,
+                className="mb-3"
+            ),
+
+            dbc.Button(
+                [html.I(className="fas fa-flask me-2"), "Innovation investieren"],
+                id="btn-invest-innovation",
+                color="primary",
+                className="w-100"
+            ),
+
+            html.Div(id="innovation-feedback", className="mt-3")
+        ])
+    ], className="shadow-sm mb-4")
+
+
+def create_balance_sheet_card(firm_data):
+    """Bilanz & GuV Anzeige"""
+    balance_sheet = firm_data.get('balance_sheet', {})
+    income_statement = firm_data.get('income_statement', {})
+
+    aktiva = balance_sheet.get('aktiva', {})
+    passiva = balance_sheet.get('passiva', {})
+
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-file-invoice me-2"),
+            "Bilanz & GuV (Jahresabschluss)"
+        ])),
+        dbc.CardBody([
+            dbc.Tabs([
+                dbc.Tab(label="Bilanz", children=[
+                    html.Div([
+                        html.H6("AKTIVA (Assets)", className="text-primary mt-3 mb-2"),
+                        dbc.ListGroup([
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("Anlagevermögen"),
+                                    html.Span(f"€{format_de(aktiva.get('anlagevermoegen', {}).get('summe', 0))}", className="float-end")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Small([
+                                    "  - Gebäude: €", format_de(aktiva.get('anlagevermoegen', {}).get('gebaeude', 0))
+                                ])
+                            ], className="ps-4"),
+                            dbc.ListGroupItem([
+                                html.Small([
+                                    "  - Maschinen: €", format_de(aktiva.get('anlagevermoegen', {}).get('maschinen', 0))
+                                ])
+                            ], className="ps-4"),
+                            dbc.ListGroupItem([
+                                html.Small([
+                                    "  - Ausstattung: €", format_de(aktiva.get('anlagevermoegen', {}).get('ausstattung', 0))
+                                ])
+                            ], className="ps-4"),
+
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("Umlaufvermögen"),
+                                    html.Span(f"€{format_de(aktiva.get('umlaufvermoegen', {}).get('summe', 0))}", className="float-end")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Small([
+                                    "  - Kasse/Bank: €", format_de(aktiva.get('umlaufvermoegen', {}).get('kasse_bank', 0))
+                                ])
+                            ], className="ps-4"),
+                            dbc.ListGroupItem([
+                                html.Small([
+                                    "  - Vorräte: €", format_de(aktiva.get('umlaufvermoegen', {}).get('vorraete', 0))
+                                ])
+                            ], className="ps-4"),
+
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("SUMME AKTIVA", className="text-success"),
+                                    html.Span(f"€{format_de(balance_sheet.get('bilanzsumme', 0))}", className="float-end fw-bold text-success")
+                                ])
+                            ], color="light"),
+                        ], className="mb-3"),
+
+                        html.H6("PASSIVA (Liabilities & Equity)", className="text-primary mb-2"),
+                        dbc.ListGroup([
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("Eigenkapital"),
+                                    html.Span(f"€{format_de(passiva.get('eigenkapital', {}).get('summe', 0))}", className="float-end")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("Fremdkapital"),
+                                    html.Span(f"€{format_de(passiva.get('fremdkapital', {}).get('summe', 0))}", className="float-end")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("SUMME PASSIVA", className="text-success"),
+                                    html.Span(f"€{format_de(passiva.get('summe', 0))}", className="float-end fw-bold text-success")
+                                ])
+                            ], color="light"),
+                        ]),
+                    ], className="p-2")
+                ]),
+
+                dbc.Tab(label="GuV (P&L)", children=[
+                    html.Div([
+                        dbc.ListGroup([
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    "Umsatzerlöse",
+                                    html.Span(f"€{format_de(income_statement.get('umsatzerloese', 0))}", className="float-end text-success")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    "- Variable Kosten",
+                                    html.Span(f"€{format_de(income_statement.get('variable_kosten', 0))}", className="float-end text-danger")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("= Deckungsbeitrag"),
+                                    html.Span(f"€{format_de(income_statement.get('deckungsbeitrag', 0))}", className="float-end fw-bold")
+                                ])
+                            ], color="light"),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    "- Fixkosten",
+                                    html.Span(f"€{format_de(income_statement.get('fixkosten', 0))}", className="float-end text-danger")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("= EBITDA"),
+                                    html.Span(f"€{format_de(income_statement.get('ebitda', 0))}", className="float-end fw-bold text-info")
+                                ])
+                            ], color="light"),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    "- Abschreibungen",
+                                    html.Span(f"€{format_de(income_statement.get('abschreibungen', 0))}", className="float-end text-danger")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("= EBIT"),
+                                    html.Span(f"€{format_de(income_statement.get('ebit', 0))}", className="float-end fw-bold text-primary")
+                                ])
+                            ], color="light"),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    "- Zinsen",
+                                    html.Span(f"€{format_de(income_statement.get('zinsen', 0))}", className="float-end text-danger")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("= EBT"),
+                                    html.Span(f"€{format_de(income_statement.get('ebt', 0))}", className="float-end fw-bold")
+                                ])
+                            ], color="light"),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    "- Steuern (33.33%)",
+                                    html.Span(f"€{format_de(income_statement.get('steuern', 0))}", className="float-end text-danger")
+                                ])
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Div([
+                                    html.Strong("= Jahresüberschuss", className="text-success"),
+                                    html.Span(f"€{format_de(income_statement.get('jahresueberschuss', 0))}", className="float-end fw-bold text-success")
+                                ])
+                            ], color="success"),
+                        ], className="mt-3")
+                    ], className="p-2")
+                ]),
+
+                dbc.Tab(label="Deckungsbeitrag", children=[
+                    html.Div([
+                        dbc.Alert([
+                            html.H6("Deckungsbeitragsrechnung", className="mb-3"),
+                            html.P([
+                                html.Strong("Deckungsbeitrag gesamt: "),
+                                f"€{format_de(firm_data.get('contribution_margin', {}).get('total', 0))}"
+                            ], className="mb-2"),
+                            html.P([
+                                html.Strong("Deckungsbeitrag pro Einheit: "),
+                                f"€{firm_data.get('contribution_margin', {}).get('per_unit', 0):.2f}"
+                            ], className="mb-2"),
+                            html.Hr(),
+                            html.P([
+                                html.Strong("Variable Kosten gesamt: "),
+                                f"€{format_de(firm_data.get('contribution_margin', {}).get('variable_costs', 0))}"
+                            ], className="mb-2"),
+                            html.P([
+                                html.Strong("Fixkosten gesamt: "),
+                                f"€{format_de(firm_data.get('contribution_margin', {}).get('fixed_costs', 0))}"
+                            ], className="mb-0")
+                        ], color="info", className="mt-3")
+                    ], className="p-2")
+                ])
+            ])
+        ])
+    ], className="shadow-sm mb-4")
+
+
+def create_liquidity_warning_card(firm_data):
+    """Liquiditäts-Warning System"""
+    liquidity = firm_data.get('liquidity', {})
+    liq1 = liquidity.get('liquidity_1')  # None wenn unendlich
+    liq2 = liquidity.get('liquidity_2')  # None wenn unendlich
+    liq3 = liquidity.get('liquidity_3')  # None wenn unendlich
+    status = liquidity.get('status', 'HEALTHY')
+
+    status_colors = {
+        'HEALTHY': 'success',
+        'GOOD': 'primary',
+        'WARNING': 'warning',
+        'CRITICAL': 'danger'
+    }
+
+    status_icons = {
+        'HEALTHY': 'fas fa-check-circle',
+        'GOOD': 'fas fa-info-circle',
+        'WARNING': 'fas fa-exclamation-triangle',
+        'CRITICAL': 'fas fa-exclamation-circle'
+    }
+
+    color = status_colors.get(status, 'secondary')
+    icon = status_icons.get(status, 'fas fa-question-circle')
+
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className=f"{icon} me-2"),
+            "Liquiditäts-Monitoring"
+        ]), className=f"bg-{color} text-white"),
+        dbc.CardBody([
+            dbc.Alert([
+                html.H4(status, className="mb-2"),
+                html.P("Liquiditätslage Ihres Unternehmens", className="mb-0")
+            ], color=color, className="mb-3"),
+
+            # Liquiditätsgrade
+            html.H6("Liquiditätsgrade:", className="mb-3"),
+            dbc.ListGroup([
+                dbc.ListGroupItem([
+                    html.Div([
+                        html.Strong("Liquidität 1° (Barliquidität)"),
+                        html.Span(f"{liq1:.2f}" if liq1 is not None else "∞", className="float-end")
+                    ]),
+                    dbc.Progress(
+                        value=min(100, liq1 * 50) if liq1 is not None else 100,
+                        color="success" if liq1 is None or liq1 >= 1.0 else "danger",
+                        className="mt-2",
+                        style={"height": "10px"}
+                    )
+                ]),
+                dbc.ListGroupItem([
+                    html.Div([
+                        html.Strong("Liquidität 2° (Einzugsbedingt)"),
+                        html.Span(f"{liq2:.2f}" if liq2 is not None else "∞", className="float-end")
+                    ]),
+                    dbc.Progress(
+                        value=min(100, liq2 * 50) if liq2 is not None else 100,
+                        color="success" if liq2 is None or liq2 >= 1.0 else "warning",
+                        className="mt-2",
+                        style={"height": "10px"}
+                    )
+                ]),
+                dbc.ListGroupItem([
+                    html.Div([
+                        html.Strong("Liquidität 3° (Umsatzbedingt)"),
+                        html.Span(f"{liq3:.2f}" if liq3 is not None else "∞", className="float-end")
+                    ]),
+                    dbc.Progress(
+                        value=min(100, liq3 * 25) if liq3 is not None else 100,
+                        color="success" if liq3 is None or liq3 >= 2.0 else "warning",
+                        className="mt-2",
+                        style={"height": "10px"}
+                    )
+                ]),
+            ], className="mb-3"),
+
+            # Empfehlungen
+            html.H6("Empfehlungen:", className="mb-2"),
+            html.Ul([
+                html.Li(rec) for rec in liquidity.get('recommendations', []) if rec
+            ]) if any(liquidity.get('recommendations', [])) else html.P("Keine Handlungsempfehlungen", className="text-muted"),
+
+            # Interpretationen
+            html.Small([
+                html.P("Liquidität 1°: Cash / kurzfr. Verbindlichkeiten (Ziel: >1.0)", className="mb-1 text-muted"),
+                html.P("Liquidität 2°: (Cash + Forderungen) / kurzfr. Verbindlichkeiten (Ziel: >1.0)", className="mb-1 text-muted"),
+                html.P("Liquidität 3°: (Cash + Forderungen + Vorräte) / kurzfr. Verbindlichkeiten (Ziel: >2.0)", className="mb-0 text-muted")
             ])
         ])
     ], className="shadow-sm mb-4")
@@ -557,8 +1687,11 @@ def create_dashboard_layout(firm_id, firm_data):
             # KPIs - werden live aktualisiert
             html.Div(id="kpi-container", children=create_dashboard_kpis(firm_data)),
 
-            # Finanztrends Chart
-            create_financial_trends_chart(firm_data),
+            # Liquiditäts-Warning (prominent oben) - LIVE UPDATE
+            html.Div(id="liquidity-warning-container", children=create_liquidity_warning_card(firm_data)),
+
+            # Finanztrends Chart - LIVE UPDATE
+            html.Div(id="financial-trends-container", children=create_financial_trends_chart(firm_data)),
 
             dbc.Row([
                 dbc.Col([
@@ -568,12 +1701,42 @@ def create_dashboard_layout(firm_id, firm_data):
                     # Produktion & Lagerbestand Live-Anzeige
                     create_production_inventory_status(firm_data),
 
+                    # NEUE FEATURES - Innovation & Produktlebenszyklus - LIVE UPDATE
+                    html.Div(id="innovation-container", children=create_innovation_card(firm_data)),
+
                     # Entscheidungsformular
                     create_decision_form(firm_data),
                     create_cost_info(),
                 ], width=12, lg=8),
 
                 dbc.Col([
+                    # NEUE FEATURES - Maschinen-Upgrade - LIVE UPDATE
+                    html.Div(id="machines-container", children=create_machine_upgrade_card(firm_data)),
+
+                    # NEUE FEATURES - Finanzierung (Kredite & Eigenkapital) - LIVE UPDATE
+                    html.Div(id="financing-container", children=create_financing_card(firm_data)),
+
+                    # NEUE FEATURES - Personal-Management - LIVE UPDATE
+                    html.Div(id="personnel-container", children=create_personnel_card(firm_data)),
+
+                    # NEUE FEATURES - Bilanz & GuV - LIVE UPDATE
+                    html.Div(id="balance-sheet-container", children=create_balance_sheet_card(firm_data)),
+
+                    # Marktvolumen-Übersicht
+                    create_market_volume_card(),
+
+                    # Kostenstruktur-Karte - LIVE UPDATE
+                    html.Div(id="cost-structure-container", children=create_cost_structure_card(firm_data)),
+
+                    # Marktvolumen-Graph
+                    create_market_volume_graph(),
+
+                    # Aktien-Übersicht
+                    create_shares_overview_card(firm_data),
+
+                    # M&A-Übernahme Interface
+                    create_acquisition_card(firm_id),
+
                     # Marktübersicht - live aktualisiert
                     html.Div(id="market-overview-container", children=create_market_table({"firms": []})),
                 ], width=12, lg=4),
@@ -670,7 +1833,7 @@ def load_firms_list(n_clicks, pathname):
                     html.Small([
                         f"Mitglieder: {firm['user_count']} | ",
                         f"Marktanteil: {firm['market_share']}% | ",
-                        f"Cash: €{firm['cash']:,.0f}"
+                        f"Cash: €{format_de(firm['cash'])}"
                     ], className="text-muted")
                 ])
                 options.append({
@@ -743,16 +1906,40 @@ def join_firm(n_clicks, user_name, firm_id):
      State("input-marketing", "value"),
      State("input-rd", "value"),
      State("input-quality", "value"),
-     State("input-jit", "value")],
+     State("input-jit", "value"),
+     State("input-process-opt", "value"),
+     State("input-supplier-neg", "value"),
+     State("input-overhead-red", "value"),
+     State("input-buildings-depr", "value"),
+     State("input-machines-depr", "value"),
+     State("input-equipment-depr", "value")],
     prevent_initial_call=True
 )
-def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, jit):
+def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, jit,
+                    process_opt, supplier_neg, overhead_red, buildings_depr, machines_depr, equipment_depr):
     """Submit decision callback mit Validierung"""
     # Hole aktuelle Firma für Validierung
     try:
         firm_response = requests.get(f"{API_URL}/api/firms/{firm_id}", timeout=2)
         firm_data = firm_response.json()
         cash = firm_data.get('cash', 0)
+
+        # Convert None/invalid to 0 for optional numeric fields
+        # This handles empty fields, None, and any other non-numeric values
+        def safe_numeric(value, default=0):
+            """Convert any value to numeric, defaulting to 0 if invalid"""
+            if value is None or value == "" or value == "":
+                return default
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        marketing = safe_numeric(marketing, 0)
+        rd = safe_numeric(rd, 0)
+        process_opt = safe_numeric(process_opt, 0)
+        supplier_neg = safe_numeric(supplier_neg, 0)
+        overhead_red = safe_numeric(overhead_red, 0)
 
         # VALIDIERUNG
         errors = []
@@ -762,22 +1949,16 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
             errors.append("Produktpreis muss zwischen €50 und €500 liegen")
 
         # Kapazität Validierung
-        if capacity is None or capacity < 0 or capacity > 120000:
-            errors.append("Produktionskapazität muss zwischen 0 und 120.000 Einheiten liegen")
+        if capacity is None or capacity < 0 or capacity > 500000:
+            errors.append("Produktionskapazität muss zwischen 0 und 500.000 Einheiten liegen")
 
-        # Marketing Validierung
-        max_marketing = cash * 0.3
-        if marketing is None or marketing < 0:
-            errors.append("Marketing Budget muss mindestens 0€ sein")
-        elif marketing > max_marketing:
-            errors.append(f"Marketing Budget zu hoch! Maximum: €{max_marketing:,.0f} (30% von Cash)")
+        # Marketing Validierung - nur Negativprüfung, kein Maximum
+        if marketing < 0:
+            errors.append("Marketing Budget kann nicht negativ sein")
 
-        # F&E Validierung
-        max_rd = cash * 0.2
-        if rd is None or rd < 0:
-            errors.append("F&E Budget muss mindestens 0€ sein")
-        elif rd > max_rd:
-            errors.append(f"F&E Budget zu hoch! Maximum: €{max_rd:,.0f} (20% von Cash)")
+        # F&E Validierung - nur Negativprüfung, kein Maximum
+        if rd < 0:
+            errors.append("F&E Budget kann nicht negativ sein")
 
         # Qualität Validierung
         if quality is None or quality < 1 or quality > 10:
@@ -786,6 +1967,24 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
         # JIT Validierung
         if jit is None or jit < 0 or jit > 100:
             errors.append("JIT Safety Stock muss zwischen 0% und 100% liegen")
+
+        # Kostenoptimierungs-Validierung - nur Negativprüfung, kein Maximum
+        if process_opt < 0:
+            errors.append("Prozessoptimierung kann nicht negativ sein")
+
+        if supplier_neg < 0:
+            errors.append("Lieferantenverhandlungen kann nicht negativ sein")
+
+        if overhead_red < 0:
+            errors.append("Verwaltungsoptimierung kann nicht negativ sein")
+
+        # Abschreibungsraten Validierung
+        if buildings_depr is not None and (buildings_depr < 0.1 or buildings_depr > 5.0):
+            errors.append("AfA-Rate Gebäude muss zwischen 0.1% und 5.0% liegen")
+        if machines_depr is not None and (machines_depr < 0.1 or machines_depr > 5.0):
+            errors.append("AfA-Rate Maschinen muss zwischen 0.1% und 5.0% liegen")
+        if equipment_depr is not None and (equipment_depr < 0.1 or equipment_depr > 5.0):
+            errors.append("AfA-Rate Ausstattung muss zwischen 0.1% und 5.0% liegen")
 
         # Wenn Fehler, zeige alle
         if errors:
@@ -804,7 +2003,13 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
                 "marketing_budget": marketing,
                 "rd_budget": rd,
                 "quality_level": quality,
-                "jit_safety_stock": jit
+                "jit_safety_stock": jit,
+                "process_optimization": process_opt or 0,
+                "supplier_negotiation": supplier_neg or 0,
+                "overhead_reduction": overhead_red or 0,
+                "buildings_depreciation": buildings_depr,
+                "machines_depreciation": machines_depr,
+                "equipment_depreciation": equipment_depr
             }
         )
         if response.status_code == 200:
@@ -827,13 +2032,22 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
      Output("live-status-display", "children"),
      Output("connection-status", "className"),
      Output("connection-text", "children"),
-     Output("historical-data-store", "data")],
+     Output("historical-data-store", "data"),
+     # NEUE AUTO-REFRESH OUTPUTS:
+     Output("liquidity-warning-container", "children"),
+     Output("financial-trends-container", "children"),
+     Output("innovation-container", "children"),
+     Output("machines-container", "children"),
+     Output("financing-container", "children"),
+     Output("personnel-container", "children"),
+     Output("balance-sheet-container", "children"),
+     Output("cost-structure-container", "children")],
     [Input("refresh-interval", "n_intervals"),
      Input("firm-id-store", "data")],
     State("historical-data-store", "data")
 )
 def live_update_dashboard(n, firm_id, historical_data):
-    """Live-Update aller Dashboard-Elemente (3 Sekunden Intervall)"""
+    """Live-Update ALLER Dashboard-Elemente inkl. neuer Features (1s Intervall)"""
     if not firm_id:
         return (
             "Keine Firma",
@@ -843,7 +2057,16 @@ def live_update_dashboard(n, firm_id, historical_data):
             dash.no_update,
             "fas fa-circle text-danger me-2",
             "Nicht verbunden",
-            historical_data
+            historical_data,
+            # Neue Outputs:
+            dash.no_update,  # liquidity-warning
+            dash.no_update,  # financial-trends
+            dash.no_update,  # innovation
+            dash.no_update,  # machines
+            dash.no_update,  # financing
+            dash.no_update,  # personnel
+            dash.no_update,  # balance-sheet
+            dash.no_update   # cost-structure
         )
 
     try:
@@ -872,8 +2095,8 @@ def live_update_dashboard(n, firm_id, historical_data):
         # Update current settings card
         current_settings = create_current_settings_card(firm_data)
 
-        # Update market table
-        market_table = create_market_table(market_data)
+        # Update market table (with current firm_id for acquisition buttons)
+        market_table = create_market_table(market_data, current_firm_id=firm_id)
 
         # Update live status
         live_status = [
@@ -883,11 +2106,11 @@ def live_update_dashboard(n, firm_id, historical_data):
             ], className="mb-2"),
             html.P([
                 html.Strong("Produktionskapazität: "),
-                f"{firm_data.get('production_capacity', 0):,.0f} Einheiten"
+                f"{format_de(firm_data.get('production_capacity', 0))} Einheiten"
             ], className="mb-2"),
             html.P([
                 html.Strong("Lagerbestand: "),
-                f"{firm_data.get('inventory_level', 0):,.0f} Einheiten"
+                f"{format_de(firm_data.get('inventory_level', 0))} Einheiten"
             ], className="mb-2"),
             html.P([
                 html.Strong("JIT-Effizienz: "),
@@ -895,11 +2118,11 @@ def live_update_dashboard(n, firm_id, historical_data):
             ], className="mb-2"),
             html.P([
                 html.Strong("Marketing Budget: "),
-                f"€{firm_data.get('marketing_budget', 0):,.0f}"
+                f"€{format_de(firm_data.get('marketing_budget', 0))}"
             ], className="mb-2"),
             html.P([
                 html.Strong("F&E Budget: "),
-                f"€{firm_data.get('rd_budget', 0):,.0f}"
+                f"€{format_de(firm_data.get('rd_budget', 0))}"
             ], className="mb-2"),
             html.P([
                 html.Strong("Qualitätslevel: "),
@@ -929,6 +2152,16 @@ def live_update_dashboard(n, firm_id, historical_data):
                 for key in ['quarters', 'revenue', 'profit', 'cash']:
                     historical_data[key] = historical_data[key][-12:]
 
+        # NEUE KARTEN UPDATEN:
+        liquidity_card = create_liquidity_warning_card(firm_data)
+        financial_trends = create_financial_trends_chart(firm_data)
+        innovation_card = create_innovation_card(firm_data)
+        machines_card = create_machine_upgrade_card(firm_data)
+        financing_card = create_financing_card(firm_data)
+        personnel_card = create_personnel_card(firm_data)
+        balance_sheet_card = create_balance_sheet_card(firm_data)
+        cost_structure_card = create_cost_structure_card(firm_data)
+
         return (
             timer_text,
             kpis,
@@ -937,7 +2170,16 @@ def live_update_dashboard(n, firm_id, historical_data):
             live_status,
             "fas fa-circle text-success me-2",
             "Live verbunden",
-            historical_data
+            historical_data,
+            # Neue Karten:
+            liquidity_card,
+            financial_trends,
+            innovation_card,
+            machines_card,
+            financing_card,
+            personnel_card,
+            balance_sheet_card,
+            cost_structure_card
         )
 
     except Exception as e:
@@ -949,7 +2191,16 @@ def live_update_dashboard(n, firm_id, historical_data):
             dash.no_update,
             "fas fa-circle text-danger me-2",
             f"Verbindungsfehler",
-            historical_data
+            historical_data,
+            # Neue Outputs:
+            dash.no_update,  # liquidity-warning
+            dash.no_update,  # financial-trends
+            dash.no_update,  # innovation
+            dash.no_update,  # machines
+            dash.no_update,  # financing
+            dash.no_update,  # personnel
+            dash.no_update,  # balance-sheet
+            dash.no_update   # cost-structure
         )
 
 
@@ -1037,6 +2288,278 @@ def leave_firm(n_clicks):
         # Return None to clear session, which will trigger redirect to login
         return None
     return dash.no_update
+
+
+# ============ M&A CALLBACKS ============
+
+@app.callback(
+    [Output("valuation-result", "children"),
+     Output("antitrust-check", "children"),
+     Output("btn-execute-acquisition", "disabled")],
+    Input("btn-calculate-valuation", "n_clicks"),
+    [State("firm-id-store", "data"),
+     State("acquisition-target-select", "value"),
+     State("acquisition-percentage", "value")],
+    prevent_initial_call=True
+)
+def calculate_acquisition_valuation(n_clicks, acquirer_id, target_id, percentage):
+    """Berechnet Übernahme-Bewertung und prüft Kartellrecht"""
+    if not target_id or not percentage:
+        return None, None, True
+
+    try:
+        # Hole Bewertung
+        val_response = requests.get(f"{API_URL}/api/firms/{target_id}/valuation", timeout=2)
+        valuation = val_response.json()
+
+        # Berechne Preis für gewählten Anteil
+        base_value = valuation['enterprise_value']
+        price_for_percentage = base_value * 1.30 * (percentage / 100.0)  # 30% Premium
+
+        valuation_card = dbc.Alert([
+            html.H6("Bewertung:", className="fw-bold mb-2"),
+            html.P(f"Unternehmenswert: €{format_de(base_value)}", className="mb-1"),
+            html.P(f"Übernahmeprämie: 30%", className="mb-1"),
+            html.Hr(),
+            html.H5(f"Preis für {percentage}%: €{format_de(price_for_percentage)}", className="text-warning mb-0")
+        ], color="light")
+
+        # Kartellamt-Prüfung
+        antitrust_response = requests.get(
+            f"{API_URL}/api/antitrust/check",
+            params={"acquirer_id": acquirer_id, "target_id": target_id, "percentage": percentage},
+            timeout=2
+        )
+        antitrust = antitrust_response.json()
+
+        if antitrust['allowed']:
+            antitrust_card = dbc.Alert([
+                html.I(className="fas fa-check-circle me-2"),
+                "Kartellamt: Übernahme zulässig",
+                html.Br(),
+                html.Small(f"Kombinierter Marktanteil: {antitrust['combined_market_share']:.1f}%", className="text-muted")
+            ], color="success")
+            button_disabled = False
+        else:
+            antitrust_card = dbc.Alert([
+                html.I(className="fas fa-times-circle me-2"),
+                f"Kartellamt: {antitrust['reason']}"
+            ], color="danger")
+            button_disabled = True
+
+        return valuation_card, antitrust_card, button_disabled
+
+    except Exception as e:
+        error = dbc.Alert(f"Fehler: {str(e)}", color="danger")
+        return error, None, True
+
+
+@app.callback(
+    Output("acquisition-result", "children"),
+    Input("btn-execute-acquisition", "n_clicks"),
+    [State("firm-id-store", "data"),
+     State("acquisition-target-select", "value"),
+     State("acquisition-percentage", "value")],
+    prevent_initial_call=True
+)
+def execute_acquisition(n_clicks, acquirer_id, target_id, percentage):
+    """Führt Übernahme durch"""
+    try:
+        response = requests.post(
+            f"{API_URL}/api/acquisitions",
+            json={
+                "acquirer_firm_id": acquirer_id,
+                "target_firm_id": target_id,
+                "percentage": percentage
+            },
+            timeout=5
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            return dbc.Alert([
+                html.I(className="fas fa-check-circle me-2"),
+                html.Strong("Übernahme erfolgreich!"),
+                html.Br(),
+                html.P(result['message'], className="mb-0 mt-2")
+            ], color="success", dismissable=True, duration=5000)
+        else:
+            error_detail = response.json().get('detail', 'Unbekannter Fehler')
+            return dbc.Alert([
+                html.I(className="fas fa-times-circle me-2"),
+                html.Strong("Übernahme fehlgeschlagen:"),
+                html.Br(),
+                html.P(error_detail, className="mb-0 mt-2")
+            ], color="danger", dismissable=True)
+
+    except Exception as e:
+        return dbc.Alert(f"Fehler bei Übernahme: {str(e)}", color="danger", dismissable=True)
+
+
+# ============ NEUE FEATURE CALLBACKS ============
+
+@app.callback(
+    Output("machine-upgrade-feedback", "children"),
+    Input("btn-upgrade-machines", "n_clicks"),
+    State("firm-id-store", "data"),
+    prevent_initial_call=True
+)
+def upgrade_machines(n_clicks, firm_id):
+    """Maschinen upgraden"""
+    try:
+        # Hole aktuelle Maschinenklasse
+        firm_response = requests.get(f"{API_URL}/api/firms/{firm_id}", timeout=2)
+        firm_data = firm_response.json()
+        current_class = firm_data.get('machines', {}).get('class', 'basic')
+
+        # Bestimme Zielklasse
+        target_class = 'professional' if current_class == 'basic' else 'premium'
+
+        response = requests.post(
+            f"{API_URL}/api/firms/{firm_id}/machines/upgrade",
+            json={"target_class": target_class},
+            timeout=5
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            return dbc.Alert([
+                html.I(className="fas fa-check-circle me-2"),
+                result['message']
+            ], color="success", dismissable=True, duration=4000)
+        else:
+            return dbc.Alert(response.json().get('detail', 'Fehler'), color="danger", dismissable=True)
+
+    except Exception as e:
+        return dbc.Alert(f"Fehler: {str(e)}", color="danger", dismissable=True)
+
+
+@app.callback(
+    Output("financing-feedback", "children"),
+    [Input("btn-take-loan", "n_clicks"),
+     Input("btn-issue-shares", "n_clicks")],
+    [State("firm-id-store", "data"),
+     State("input-loan-amount", "value"),
+     State("input-loan-quarters", "value"),
+     State("input-shares-amount", "value")],
+    prevent_initial_call=True
+)
+def handle_financing(loan_clicks, shares_clicks, firm_id, loan_amount, loan_quarters, shares_amount):
+    """Finanzierung: Kredite oder Aktien ausgeben"""
+    ctx = callback_context
+
+    if not ctx.triggered:
+        return dash.no_update
+
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    try:
+        if button_id == "btn-take-loan":
+            response = requests.post(
+                f"{API_URL}/api/firms/{firm_id}/financing/loan",
+                json={"amount": loan_amount, "quarters": loan_quarters},
+                timeout=5
+            )
+        elif button_id == "btn-issue-shares":
+            response = requests.post(
+                f"{API_URL}/api/firms/{firm_id}/financing/issue-shares",
+                json={"amount": shares_amount},
+                timeout=5
+            )
+        else:
+            return dash.no_update
+
+        if response.status_code == 200:
+            result = response.json()
+            return dbc.Alert([
+                html.I(className="fas fa-check-circle me-2"),
+                result['message']
+            ], color="success", dismissable=True, duration=4000)
+        else:
+            return dbc.Alert(response.json().get('detail', 'Fehler'), color="danger", dismissable=True)
+
+    except Exception as e:
+        return dbc.Alert(f"Fehler: {str(e)}", color="danger", dismissable=True)
+
+
+@app.callback(
+    Output("personnel-feedback", "children"),
+    [Input("btn-hire-personnel", "n_clicks"),
+     Input("btn-fire-personnel", "n_clicks")],
+    [State("firm-id-store", "data"),
+     State("input-hire-qualification", "value"),
+     State("input-hire-count", "value"),
+     State("input-fire-qualification", "value"),
+     State("input-fire-count", "value")],
+    prevent_initial_call=True
+)
+def handle_personnel(hire_clicks, fire_clicks, firm_id, hire_qual, hire_count, fire_qual, fire_count):
+    """Personal einstellen oder entlassen"""
+    ctx = callback_context
+
+    if not ctx.triggered:
+        return dash.no_update
+
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    try:
+        if button_id == "btn-hire-personnel":
+            response = requests.post(
+                f"{API_URL}/api/firms/{firm_id}/personnel/hire",
+                json={"qualification": hire_qual, "count": hire_count},
+                timeout=5
+            )
+        elif button_id == "btn-fire-personnel":
+            response = requests.post(
+                f"{API_URL}/api/firms/{firm_id}/personnel/fire",
+                json={"qualification": fire_qual, "count": fire_count},
+                timeout=5
+            )
+        else:
+            return dash.no_update
+
+        if response.status_code == 200:
+            result = response.json()
+            return dbc.Alert([
+                html.I(className="fas fa-check-circle me-2"),
+                result['message']
+            ], color="success", dismissable=True, duration=4000)
+        else:
+            return dbc.Alert(response.json().get('detail', 'Fehler'), color="danger", dismissable=True)
+
+    except Exception as e:
+        return dbc.Alert(f"Fehler: {str(e)}", color="danger", dismissable=True)
+
+
+@app.callback(
+    Output("innovation-feedback", "children"),
+    Input("btn-invest-innovation", "n_clicks"),
+    [State("firm-id-store", "data"),
+     State("input-innovation-amount", "value")],
+    prevent_initial_call=True
+)
+def invest_innovation(n_clicks, firm_id, amount):
+    """Innovation investieren"""
+    try:
+        response = requests.post(
+            f"{API_URL}/api/firms/{firm_id}/innovation/invest",
+            json={"amount": amount},
+            timeout=5
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            return dbc.Alert([
+                html.I(className="fas fa-check-circle me-2"),
+                result['message'],
+                html.Br(),
+                html.Small(f"Total investiert: €{format_de(result.get('total_innovation_investment', 0))} / €5M", className="mt-2")
+            ], color="success", dismissable=True, duration=4000)
+        else:
+            return dbc.Alert(response.json().get('detail', 'Fehler'), color="danger", dismissable=True)
+
+    except Exception as e:
+        return dbc.Alert(f"Fehler: {str(e)}", color="danger", dismissable=True)
 
 
 if __name__ == "__main__":

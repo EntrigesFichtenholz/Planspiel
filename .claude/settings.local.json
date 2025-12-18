@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(docker --version:*)",
+      "Bash(timeout 15 bash:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(docker-compose down:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(rm:*)",
+      "Bash(pip:*)",
+      "Bash(timeout 5 echo:*)",
+      "Bash(docker-compose:*)",
+      "Bash(timeout 10 echo:*)",
+      "Bash(timeout 20 echo:*)",
+      "Bash(timeout 3 bash:*)",
+      "Bash(curl:*)",
+      "Bash(python:*)",
+      "Bash(python run_local.py:*)",
+      "Bash(python main.py:*)",
+      "Bash(ping:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(set DEBUG_MODE=true)",
+      "Bash(findstr:*)",
+      "Bash(if exist __pycache__ rmdir /s /q __pycache__)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(docker-compose build:*)",
+      "Bash(git checkout:*)",
+      "Bash(docker system prune -f)",
+      "Bash(timeout 8 echo:*)",
+      "Bash(timeout 70 docker-compose logs:*)",
+      "Bash(timeout 15 echo:*)",
+      "Bash(for:*)",
+      "Bash(do echo -n \"Q$i: \")",
+      "Bash(done)",
+      "Bash(DEBUG_MODE=true docker-compose up:*)",
+      "Bash(do echo \"Advancing to Q$i...\")"
+    ],
+    "deny": [],
+    "ask": [],
+    "additionalDirectories": [
+      "/dev"
+    ]
+  }
+}
