@@ -2484,8 +2484,20 @@ def upgrade_machines(n_clicks, firm_id):
         firm = game.get_firm_by_id(firm_id)
         if not firm:
             return dbc.Alert("Firma nicht gefunden", color="danger")
-            
-        success, message = firm.upgrade_machines("premium")
+
+        # Bestimme die naechste Upgrade-Klasse basierend auf der aktuellen Klasse
+        upgrades = {
+            "basic": "professional",
+            "professional": "premium"
+        }
+
+        current_class = firm.machine_class
+        target_class = upgrades.get(current_class)
+
+        if not target_class:
+            return dbc.Alert("Maximale Maschinenklasse bereits erreicht", color="info", dismissable=True)
+
+        success, message = firm.upgrade_machines(target_class)
 
         if success:
             return dbc.Alert([
