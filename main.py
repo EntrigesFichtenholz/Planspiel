@@ -9,29 +9,30 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 import uvicorn
 import asyncio
-from models import GameSession, BusinessFirm
+from fastapi.middleware.wsgi import WSGIMiddleware
+from dashboard import app as dash_app
+from models import GameSession, BusinessFirm, FirmCreate, DecisionInput, JoinFirmInput
+from state import game
 
-# DEBUG MODE - deaktivierbar via Umgebungsvariable
-DEBUG_MODE = os.getenv("DEBUG_MODE", "true").lower() == "true"
+# DEBUG Mode (from environment)
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
+# FastAPI App
 app = FastAPI(
     title="BWL Planspiel API",
-    description="Backend für BWL Business Simulation Game",
-    version="1.0.0",
-    debug=DEBUG_MODE
+    description="Backend API fuer das BWL Planspiel mit integriertem Dashboard",
+    version="2.0"
 )
 
-# CORS für Dash Frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Game Session (In-Memory für MVP, später SQLite)
-game = GameSession()
+# CORS Middleware (fuer Entwicklung)
+if DEBUG_MODE:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -55,54 +56,10 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-# Pydantic Models für API
-class FirmCreate(BaseModel):
-    firm_name: str
-    user_name: str
-
-
-class DecisionInput(BaseModel):
-    product_price: float
-    production_capacity: float
-    marketing_budget: float
-    rd_budget: float
-    quality_level: int
-    jit_safety_stock: float  # in %
-
-    # NEUE STELLSCHRAUBEN - Effizienz-Investitionen
-    process_optimization: Optional[float] = 0
-    supplier_negotiation: Optional[float] = 0
-    overhead_reduction: Optional[float] = 0
-
-    # NEUE STELLSCHRAUBEN - Abschreibungsraten (in %)
-    buildings_depreciation: Optional[float] = None
-    machines_depreciation: Optional[float] = None
-    equipment_depreciation: Optional[float] = None
-
-
-class JoinFirmInput(BaseModel):
-    user_name: str
-
+# Game Session (Shared State)
+from state import game
 
 # ============ API ENDPOINTS ============
-
-@app.get("/")
-async def root():
-    return {
-        "message": "BWL Planspiel API",
-        "version": "1.0.0",
-        "debug_mode": DEBUG_MODE,
-        "endpoints": {
-            "health": "/health",
-            "create_firm": "POST /api/firms",
-            "get_firm": "GET /api/firms/{firm_id}",
-            "submit_decision": "POST /api/firms/{firm_id}/decision",
-            "market_overview": "GET /api/market",
-            "quarter_status": "GET /api/quarter",
-            "websocket": "WS /ws"
-        }
-    }
-
 
 @app.get("/health")
 async def health():
@@ -112,6 +69,7 @@ async def health():
         "active_firms": len(game.firms),
         "current_quarter": game.current_quarter
     }
+
 
 
 @app.post("/api/firms")
@@ -159,18 +117,16 @@ async def get_firm_by_user(user_name: str):
 
 @app.get("/api/firms")
 async def list_all_firms():
-    """Liste aller Firmen (außer Bot-Firmen)"""
+    """Liste aller Firmen (inkl. Bot-Firmen)"""
     firms = []
     for firm in game.firms.values():
-        # Filter Bot-Firmen aus (erkennbar an Namen wie "Bot1", "AI_Trader", etc.)
-        if not any(bot_name in firm.name.lower() for bot_name in ["bot", "ai_", "ki_"]):
-            firms.append({
-                "id": firm.id,
-                "name": firm.name,
-                "user_count": len(firm.user_names),
-                "market_share": round(firm.market_share * 100, 2),
-                "cash": round(firm.cash, 0)
-            })
+        firms.append({
+            "id": firm.id,
+            "name": firm.name,
+            "user_count": len(firm.user_names),
+            "market_share": round(firm.market_share * 100, 2),
+            "cash": round(firm.cash, 0)
+        })
     return {"firms": firms}
 
 
@@ -691,6 +647,32 @@ async def issue_shares(firm_id: int, shares_input: SharesInput):
         "firm": firm.to_dict()
     }
 
+@app.post("/api/firms/{firm_id}/financing/buyback-shares")
+async def buyback_shares_to_go_private(firm_id: int):
+    """Kauft alle öffentlichen Anteile zurück und geht von der Börse (Delisting)"""
+    firm = game.get_firm_by_id(firm_id)
+    if not firm:
+        raise HTTPException(status_code=404, detail="Firma nicht gefunden")
+
+    success, message = firm.buyback_shares_to_go_private()
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    await manager.broadcast({
+        "type": "shares_bought_back",
+        "firm_id": firm_id,
+        "message": message,
+        "firm": firm.to_dict()
+    })
+
+    return {
+        "success": True,
+        "message": message,
+        "firm": firm.to_dict(),
+        "is_now_private": not firm.is_public
+    }
+
 # PERSONALMANAGEMENT
 class PersonnelInput(BaseModel):
     qualification: str  # "ungelernt", "angelernt", "facharbeiter"
@@ -980,6 +962,67 @@ async def get_firm_valuation(firm_id: int):
     }
 
 
+@app.get("/api/firms/{firm_id}/ownership")
+async def get_firm_ownership(firm_id: int):
+    """Zeigt Besitzstruktur und Portfolio-Übersicht"""
+    firm = game.get_firm_by_id(firm_id)
+    if not firm:
+        raise HTTPException(status_code=404, detail="Firma nicht gefunden")
+
+    # Portfolio: Shares this firm owns IN other companies
+    portfolio_details = []
+    total_portfolio_value = 0.0
+    for target_firm_id, percentage in firm.portfolio.items():
+        target_firm = game.get_firm_by_id(target_firm_id)
+        if target_firm:
+            # Calculate value of this stake
+            valuation = await get_firm_valuation(target_firm_id)
+            stake_value = valuation["enterprise_value"] * (percentage / 100.0)
+            total_portfolio_value += stake_value
+
+            portfolio_details.append({
+                "firm_id": target_firm_id,
+                "firm_name": target_firm.name,
+                "percentage_owned": round(percentage, 2),
+                "stake_value": round(stake_value, 2),
+                "is_full_ownership": percentage >= 100.0,
+                "is_majority": percentage >= 51.0,
+                "is_blocking_minority": percentage >= 25.0
+            })
+
+    # Sort by percentage owned (descending)
+    portfolio_details.sort(key=lambda x: x["percentage_owned"], reverse=True)
+
+    # Shareholders: Who owns shares IN this firm
+    shareholders_details = []
+    for shareholder_name, percentage in firm.shares.items():
+        shareholders_details.append({
+            "shareholder": shareholder_name,
+            "percentage": round(percentage, 2),
+            "is_majority_shareholder": percentage >= 51.0,
+            "is_blocking_minority": percentage >= 25.0
+        })
+
+    # Sort by percentage (descending)
+    shareholders_details.sort(key=lambda x: x["percentage"], reverse=True)
+
+    return {
+        "firm_id": firm_id,
+        "firm_name": firm.name,
+        "portfolio": {
+            "total_investments": len(portfolio_details),
+            "total_portfolio_value": round(total_portfolio_value, 2),
+            "holdings": portfolio_details,
+            "has_full_ownership": any(h["is_full_ownership"] for h in portfolio_details)
+        },
+        "shareholders": {
+            "total_shareholders": len(shareholders_details),
+            "ownership_structure": "Privat" if not firm.is_public else "Börsennotiert",
+            "shareholders_list": shareholders_details
+        }
+    }
+
+
 @app.get("/api/antitrust/check")
 async def check_antitrust(acquirer_id: int, target_id: int, percentage: float):
     """Prüft ob Übernahme kartellrechtlich zulässig ist"""
@@ -1129,22 +1172,26 @@ async def execute_partial_acquisition(req: AcquisitionRequest):
         }
 
 
+# MOUNT DASHBOARD (at root)
+app.mount("/", WSGIMiddleware(dash_app.server))
+
+
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))
     print(f"""
     ================================================
-       BWL Planspiel Server
+       BWL Planspiel Server (Integrated)
        Debug Mode: {DEBUG_MODE}
     ================================================
 
-    API: http://localhost:8000
-    Docs: http://localhost:8000/docs
-    Health: http://localhost:8000/health
+    Dashboard: http://localhost:{port}
+    API Docs: http://localhost:{port}/docs
     """)
 
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,  # Standard port for production
-        reload=DEBUG_MODE,  # Enable reload in debug mode
+        port=port,
+        reload=DEBUG_MODE,
         log_level="debug" if DEBUG_MODE else "info"
     )

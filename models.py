@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import math
 from enum import Enum
+from pydantic import BaseModel
 
 
 class MachineClass(Enum):
@@ -16,6 +17,49 @@ class MachineClass(Enum):
     BASIC = "basic"
     PROFESSIONAL = "professional"
     PREMIUM = "premium"
+
+
+# ============ Pydantic Models (für API & Logic) ============
+class FirmCreate(BaseModel):
+    firm_name: str
+    user_name: str
+
+
+class DecisionInput(BaseModel):
+    product_price: float
+    production_capacity: float
+    marketing_budget: float
+    rd_budget: float
+    quality_level: int
+    jit_safety_stock: float  # in %
+
+    # NEUE STELLSCHRAUBEN - Effizienz-Investitionen
+    process_optimization: Optional[float] = 0
+    supplier_negotiation: Optional[float] = 0
+    overhead_reduction: Optional[float] = 0
+
+    # NEUE STELLSCHRAUBEN - Abschreibungsraten (in %)
+    buildings_depreciation: Optional[float] = None
+    machines_depreciation: Optional[float] = None
+    equipment_depreciation: Optional[float] = None
+
+
+class JoinFirmInput(BaseModel):
+    user_name: str
+# ===========================================================
+
+
+
+# LOT/BATCH SYSTEM - Konvertierung zwischen Einheiten und Losen
+LOT_SIZE = 100  # 1 Los = 100 Einheiten
+UNITS_PER_LOT = 100
+
+# MASCHINEN-KAPAZITÄTEN (Lose pro Quartal)
+MACHINE_LOT_CAPACITIES = {
+    "basic": 400,        # 400 Lose/Quartal = 40.000 Einheiten
+    "professional": 600, # 600 Lose/Quartal = 60.000 Einheiten
+    "premium": 1000      # 1000 Lose/Quartal = 100.000 Einheiten
+}
 
 
 class PersonnelQualification(Enum):
@@ -139,7 +183,8 @@ class BusinessFirm:
     brand_value: float = 1_000_000.0
 
     # M&A & AKTIEN-SYSTEM (nach deutschem Modell)
-    shares: Dict[str, float] = field(default_factory=lambda: {})  # {owner_name: percentage}
+    shares: Dict[str, float] = field(default_factory=lambda: {})  # {owner_name: percentage} - Who owns shares IN this firm
+    portfolio: Dict[int, float] = field(default_factory=lambda: {})  # {firm_id: percentage} - Shares this firm owns IN other firms
     is_public: bool = False  # Börsennotiert oder privat
     share_price: float = 0.0  # Aktienkurs (bei börsennotierten Firmen)
     market_capitalization: float = 0.0  # Marktkapitalisierung
@@ -151,6 +196,9 @@ class BusinessFirm:
     bankruptcy_quarter: int = 0
 
     # NEUE SYSTEME - BWL-Erweiterungen
+
+    # LOT/BATCH SYSTEM CONSTANTS
+    LOT_SIZE: int = 100  # Units per lot/batch (1 machine = 1 lot = 100 units)
 
     # MASCHINENSYSTEM (3 Qualitätsklassen)
     machine_class: str = "basic"  # basic, professional, premium
@@ -211,6 +259,51 @@ class BusinessFirm:
     fixed_costs_total: float = 0.0  # Gesamte Fixkosten
     contribution_margin_total: float = 0.0  # Deckungsbeitrag (Revenue - Variable Costs)
     contribution_margin_per_unit: float = 0.0  # Deckungsbeitrag pro Einheit
+
+    def calculate_max_production_capacity(self) -> float:
+        """
+        Berechnet maximale Produktionskapazität basierend auf:
+        - Maschinenklasse (Kapazität in Losen pro Quartal)
+        - Personalproduktivität (gewichteter Durchschnitt)
+
+        Returns: Maximale Produktionskapazität in Einheiten
+        """
+        # 1. Maschinenkapazität in Losen
+        machine_lot_capacity = MACHINE_LOT_CAPACITIES.get(self.machine_class, 400)
+
+        # 2. Personalproduktivität berechnen (gewichteter Durchschnitt)
+        total_personnel = (
+            self.personnel_ungelernt +
+            self.personnel_angelernt +
+            self.personnel_facharbeiter
+        )
+
+        if total_personnel == 0:
+            personnel_productivity = 0.0
+        else:
+            weighted_productivity = (
+                self.personnel_ungelernt * self.productivity_ungelernt +
+                self.personnel_angelernt * self.productivity_angelernt +
+                self.personnel_facharbeiter * self.productivity_facharbeiter
+            ) / total_personnel
+            personnel_productivity = weighted_productivity
+
+        # 3. Maschineneffizienz (abhängig von Maschinenklasse)
+        machine_efficiency = self.machines_efficiency_factor
+
+        # 4. Maximale Kapazität = Maschinenkapazität × Personalproduktivität × Maschineneffizienz
+        max_lots = machine_lot_capacity * personnel_productivity * machine_efficiency
+        max_units = max_lots * UNITS_PER_LOT
+
+        return max_units
+
+    def get_production_in_lots(self) -> float:
+        """Konvertiert aktuelle Produktionskapazität in Lose"""
+        return self.production_capacity / UNITS_PER_LOT
+
+    def get_inventory_in_lots(self) -> float:
+        """Konvertiert Lagerbestand in Lose"""
+        return self.inventory_level / UNITS_PER_LOT
 
     def calculate_quarterly_results(self) -> Dict:
         """Berechnet Quartalsergebnisse basierend auf Entscheidungen"""
@@ -606,7 +699,11 @@ class BusinessFirm:
                        buildings_depr: float = None, machines_depr: float = None, equipment_depr: float = None):
         """Wendet Quartalsentscheidungen an (ERWEITERT mit Effizienz-Investitionen)"""
         self.product_price = max(50, min(500, price))
-        self.production_capacity = max(0, min(120_000, capacity))
+
+        # NEUE LOGIK: Produktionskapazität wird von Maschinen + Personal begrenzt
+        max_capacity = self.calculate_max_production_capacity()
+        requested_capacity = max(0, capacity)
+        self.production_capacity = min(requested_capacity, max_capacity)
 
         # Marketing max 30% von Cash
         max_marketing = self.cash * 0.3
@@ -749,11 +846,21 @@ class BusinessFirm:
             self.shares[acquirer_name] = 0.0
         self.shares[acquirer_name] += percentage
 
+        # PORTFOLIO TRACKING: Track shares acquirer owns in this firm
+        if self.id not in acquirer_firm.portfolio:
+            acquirer_firm.portfolio[self.id] = 0.0
+        acquirer_firm.portfolio[self.id] += percentage
+
+        # Check if 100% ownership achieved
+        ownership_status = ""
+        if acquirer_firm.portfolio[self.id] >= 100.0:
+            ownership_status = " [100% EIGENTUM - VOLLSTÄNDIGE ÜBERNAHME]"
+
         # Cash geht an die Firma (bei Kapitalerhöhung) oder an Altaktionäre (bei Anteilsverkauf)
         # Hier: Vereinfacht - Cash geht direkt an die Ziel-Firma
         self.cash += acquisition_price * 0.7  # 70% gehen an Firma, 30% Transaktionskosten/Steuern
 
-        return True, f"✅ Übernahme erfolgreich! {percentage}% Anteile für €{acquisition_price:,.0f} erworben"
+        return True, f"Übernahme erfolgreich! {percentage}% Anteile für €{acquisition_price:,.0f} erworben{ownership_status}"
 
     def process_bankruptcy(self, game_session: 'GameSession') -> Dict:
         """
@@ -1060,6 +1167,63 @@ class BusinessFirm:
 
             return True, f"Kapitalerhöhung erfolgreich! €{amount:,.0f} aufgenommen (Kosten: €{raise_costs:,.0f})"
 
+    def buyback_shares_to_go_private(self) -> tuple[bool, str]:
+        """
+        Aktienrückkauf um von der Börse zu gehen (Delisting)
+        Kauft alle Anteile von Public_Investors und New_Investors zurück
+        """
+        if not self.is_public:
+            return False, "Firma ist nicht börsennotiert"
+
+        # Berechne Wert der öffentlichen Anteile
+        public_shares = 0.0
+        public_shareholders = []
+
+        for shareholder, percentage in list(self.shares.items()):
+            if shareholder in ["Public_Investors", "New_Investors"]:
+                public_shares += percentage
+                public_shareholders.append(shareholder)
+
+        if public_shares == 0:
+            # Keine öffentlichen Aktionäre mehr - einfach delisten
+            self.is_public = False
+            return True, "Firma ist jetzt privat (keine öffentlichen Aktionäre)"
+
+        # Berechne Rückkaufpreis (Enterprise Value * Anteil + 20% Premium)
+        self.calculate_enterprise_value()
+        base_value = self.enterprise_value * (public_shares / 100.0)
+        buyback_premium = 0.20  # 20% Premium für Rückkauf
+        buyback_price = base_value * (1 + buyback_premium)
+
+        # Transaktionskosten (5% für Banken, Anwälte, Delisting-Gebühren)
+        transaction_costs = buyback_price * 0.05
+        total_cost = buyback_price + transaction_costs
+
+        # Prüfe ob genug Cash vorhanden
+        if self.cash < total_cost:
+            return False, f"Nicht genug Bargeld für Rückkauf. Benötigt: €{total_cost:,.0f}, Verfügbar: €{self.cash:,.0f}"
+
+        # Führe Rückkauf durch
+        self.cash -= total_cost
+
+        # Entferne öffentliche Aktionäre
+        for shareholder in public_shareholders:
+            del self.shares[shareholder]
+
+        # Normalisiere verbleibende Anteile auf 100%
+        if self.shares:
+            remaining_total = sum(self.shares.values())
+            if remaining_total > 0:
+                for shareholder in self.shares:
+                    self.shares[shareholder] = (self.shares[shareholder] / remaining_total) * 100.0
+
+        # Delisting
+        self.is_public = False
+        self.share_price = 0.0
+        self.market_capitalization = 0.0
+
+        return True, f"Rückkauf erfolgreich! {public_shares:.1f}% für €{buyback_price:,.0f} zurückgekauft (Kosten: €{transaction_costs:,.0f}). Firma ist jetzt privat"
+
     def generate_balance_sheet(self) -> Dict:
         """
         Generiert Bilanz (Balance Sheet) nach deutschem HGB
@@ -1234,7 +1398,17 @@ class BusinessFirm:
                 "class": self.machine_class,
                 "efficiency_factor": round(self.machines_efficiency_factor, 2),
                 "energy_cost_factor": round(self.machine_energy_cost_factor, 2),
+                "lot_capacity_per_quarter": MACHINE_LOT_CAPACITIES.get(self.machine_class, 400),
+                "max_production_capacity_units": round(self.calculate_max_production_capacity(), 2),
+                "max_production_capacity_lots": round(self.calculate_max_production_capacity() / UNITS_PER_LOT, 2),
                 "next_upgrade_cost": 3_000_000 if self.machine_class == "basic" else (6_000_000 if self.machine_class == "professional" else 0)
+            },
+            "production": {
+                "capacity_units": round(self.production_capacity, 2),
+                "capacity_lots": round(self.get_production_in_lots(), 2),
+                "inventory_units": round(self.inventory_level, 2),
+                "inventory_lots": round(self.get_inventory_in_lots(), 2),
+                "lot_size": UNITS_PER_LOT
             },
             "personnel": {
                 "ungelernt": {
@@ -1359,6 +1533,93 @@ class GameSession:
         """Prüft ob Quartal vorbei ist"""
         return time.time() - self.quarter_start_time >= self.quarter_duration
 
+    def enforce_kartellamt_regulations(self):
+        """
+        Kartellamt (Antitrust Authority) enforcement to prevent market dominance
+        - Fines for dominant firms
+        - Forced price reductions
+        - Support for smaller firms
+        - Potential forced divestitures
+        """
+        if not self.firms:
+            return
+
+        # Thresholds for intervention
+        WARNING_THRESHOLD = 0.30    # 30% market share
+        PENALTY_THRESHOLD = 0.40    # 40% market share
+        CRITICAL_THRESHOLD = 0.50   # 50% market share
+
+        kartellamt_actions = []
+
+        for firm in self.firms.values():
+            if firm.market_share < WARNING_THRESHOLD:
+                # Small firms get subsidies to help competition
+                if firm.market_share < 0.10 and firm.profit < 0:  # Struggling small firms
+                    subsidy = min(50000, abs(firm.profit) * 0.5)
+                    firm.cash += subsidy
+                    kartellamt_actions.append(f"Mittelstandsförderung: {firm.name} erhält €{subsidy:,.0f} Subvention")
+                continue
+
+            # WARNING LEVEL: 30-40% market share
+            if WARNING_THRESHOLD <= firm.market_share < PENALTY_THRESHOLD:
+                warning_fine = firm.revenue * 0.02  # 2% of revenue
+                firm.cash -= warning_fine
+                kartellamt_actions.append(
+                    f"[WARNUNG] Kartellamt: {firm.name} (Marktanteil {firm.market_share*100:.1f}%) - Warnung + €{warning_fine:,.0f} Bußgeld"
+                )
+
+            # PENALTY LEVEL: 40-50% market share
+            elif PENALTY_THRESHOLD <= firm.market_share < CRITICAL_THRESHOLD:
+                # Heavy fines
+                penalty_fine = firm.revenue * 0.05  # 5% of revenue
+                firm.cash -= penalty_fine
+
+                # Force price reduction to help competitors
+                if firm.price > 80:
+                    old_price = firm.price
+                    firm.price = max(80, firm.price * 0.90)  # 10% price reduction, minimum 80
+                    kartellamt_actions.append(
+                        f"[STRAFE] Kartellamt: {firm.name} (Marktanteil {firm.market_share*100:.1f}%) - €{penalty_fine:,.0f} Strafe + Preissenkung €{old_price:.2f} -> €{firm.price:.2f}"
+                    )
+                else:
+                    kartellamt_actions.append(
+                        f"[STRAFE] Kartellamt: {firm.name} (Marktanteil {firm.market_share*100:.1f}%) - €{penalty_fine:,.0f} Strafe"
+                    )
+
+            # CRITICAL LEVEL: 50%+ market share
+            elif firm.market_share >= CRITICAL_THRESHOLD:
+                # Extreme penalties
+                critical_fine = firm.revenue * 0.10  # 10% of revenue
+                firm.cash -= critical_fine
+
+                # Forced price reduction
+                if firm.price > 75:
+                    old_price = firm.price
+                    firm.price = max(75, firm.price * 0.85)  # 15% price reduction, maximum 75
+
+                # Forced capacity reduction (simulate divestiture)
+                if firm.machines > 5:
+                    machines_to_remove = max(1, int(firm.machines * 0.10))  # Remove 10% of machines
+                    firm.machines -= machines_to_remove
+                    firm.max_capacity = firm.machines * 100
+
+                    kartellamt_actions.append(
+                        f"[ZERSCHLAGUNG] KARTELLAMT: {firm.name} (Marktanteil {firm.market_share*100:.1f}%) - €{critical_fine:,.0f} Strafe + Preissenkung €{old_price:.2f} -> €{firm.price:.2f} + Zwangsverkauf von {machines_to_remove} Maschinen"
+                    )
+                else:
+                    kartellamt_actions.append(
+                        f"[ZERSCHLAGUNG] KARTELLAMT: {firm.name} (Marktanteil {firm.market_share*100:.1f}%) - €{critical_fine:,.0f} Strafe + Preissenkung"
+                    )
+
+        # Print all enforcement actions
+        if kartellamt_actions:
+            print("\n" + "="*80)
+            print("KARTELLAMT QUARTALSBERICHT")
+            print("="*80)
+            for action in kartellamt_actions:
+                print(f"  {action}")
+            print("="*80 + "\n")
+
     def advance_quarter(self):
         """Führt Quartalsabschluss für alle Firmen durch"""
         print(f"[DEBUG] ========== QUARTER {self.current_quarter + 1} STARTING ==========")
@@ -1396,6 +1657,9 @@ class GameSession:
         if total_revenue > 0:
             for firm in self.firms.values():
                 firm.market_share = firm.revenue / total_revenue
+
+        # KARTELLAMT ENFORCEMENT: Prevent market dominance
+        self.enforce_kartellamt_regulations()
 
         # INSOLVENZ-MECHANIK: Erweitert nach deutschem Recht
         bankrupt_firms = []
@@ -1501,11 +1765,47 @@ class GameSession:
                 my_product_age = firm.product_age_quarters  # Alter des Produkts in Quartalen
                 my_rank = sum(1 for f in all_firms if f.revenue > firm.revenue) + 1
 
+                # NEUE LOGIK: Berechne maximale Produktionskapazität basierend auf Maschinen
+                my_max_capacity = firm.calculate_max_production_capacity()
+
+                # KARTELLAMT AWARENESS: Adjust strategy based on market dominance
+                # Thresholds: 30% warning, 40% penalty, 50% critical
+                kartellamt_risk = "NONE"
+                if my_market_share >= 0.50:
+                    kartellamt_risk = "CRITICAL"
+                elif my_market_share >= 0.40:
+                    kartellamt_risk = "PENALTY"
+                elif my_market_share >= 0.30:
+                    kartellamt_risk = "WARNING"
+                elif my_market_share >= 0.25:
+                    kartellamt_risk = "APPROACHING"
+
                 # STRATEGISCHE ENTSCHEIDUNGEN basierend auf Marktposition
-                if my_market_share > 15 and my_cash > 3_000_000:
-                    # MARKTFÜHRER-STRATEGIE: Premium Pricing, hohe Qualität
+                if kartellamt_risk in ["CRITICAL", "PENALTY"]:
+                    # DEFENSIVE: Reduce market aggression to avoid heavy Kartellamt penalties
+                    # High prices, reduced capacity, lower marketing to lose market share intentionally
+                    price = avg_price * random.uniform(1.15, 1.30)  # 15-30% over market (lose customers)
+                    capacity = my_max_capacity * random.uniform(0.60, 0.75)  # Low production
+                    marketing = min(my_cash * 0.08, random.uniform(20000, 40000))  # Minimal marketing
+                    rd = min(my_cash * 0.15, random.uniform(80000, 150000))  # Focus on innovation instead
+                    quality = random.randint(6, 8)
+                    jit = random.uniform(20, 30)
+                    strategy = f"KARTELLAMT_DEFENSIVE ({kartellamt_risk})"
+
+                elif kartellamt_risk in ["WARNING", "APPROACHING"]:
+                    # CAUTIOUS: Maintain position but don't grow aggressively
+                    price = avg_price * random.uniform(1.05, 1.15)  # Slightly above market
+                    capacity = my_max_capacity * random.uniform(0.80, 0.90)  # Moderate production
+                    marketing = min(my_cash * 0.12, random.uniform(40000, 70000))
+                    rd = min(my_cash * 0.10, random.uniform(40000, 80000))
+                    quality = random.randint(6, 8)
+                    jit = random.uniform(18, 28)
+                    strategy = f"KARTELLAMT_CAUTIOUS ({kartellamt_risk})"
+
+                elif my_market_share > 0.15 and my_cash > 3_000_000:
+                    # MARKTFÜHRER-STRATEGIE: Premium Pricing, hohe Qualität, maximale Kapazitätsauslastung
                     price = avg_price * random.uniform(1.1, 1.25)  # 10-25% über Markt
-                    capacity = avg_capacity * random.uniform(1.0, 1.2)
+                    capacity = my_max_capacity * random.uniform(0.95, 1.0)  # 95-100% Auslastung
                     marketing = min(my_cash * 0.20, random.uniform(80000, 150000))
                     rd = min(my_cash * 0.12, random.uniform(50000, 120000))
                     quality = random.randint(7, 9)
@@ -1513,9 +1813,9 @@ class GameSession:
                     strategy = "MARKET_LEADER"
 
                 elif my_market_share < 3 and my_profit < 0:
-                    # AGGRESSIVE GROWTH: Niedrige Preise, hohe Kapazität
+                    # AGGRESSIVE GROWTH: Niedrige Preise, maximale Kapazität
                     price = avg_price * random.uniform(0.85, 0.95)  # 5-15% unter Markt
-                    capacity = avg_capacity * random.uniform(0.9, 1.1)
+                    capacity = my_max_capacity * random.uniform(0.90, 1.0)  # 90-100% Auslastung
                     marketing = min(my_cash * 0.25, random.uniform(60000, 100000))
                     rd = min(my_cash * 0.05, random.uniform(20000, 50000))
                     quality = random.randint(4, 6)
@@ -1523,9 +1823,9 @@ class GameSession:
                     strategy = "AGGRESSIVE_GROWTH"
 
                 elif my_cash < 500_000:
-                    # SURVIVAL MODE: Kosten senken, Cash generieren
+                    # SURVIVAL MODE: Kosten senken, reduzierte Kapazität
                     price = avg_price * random.uniform(1.0, 1.1)
-                    capacity = avg_capacity * random.uniform(0.7, 0.9)
+                    capacity = my_max_capacity * random.uniform(0.60, 0.75)  # Nur 60-75% Auslastung (Kostensparen)
                     marketing = min(my_cash * 0.10, random.uniform(10000, 30000))
                     rd = min(my_cash * 0.02, random.uniform(5000, 15000))
                     quality = random.randint(4, 5)
@@ -1535,7 +1835,7 @@ class GameSession:
                 elif my_lifecycle_stage == "decline" and my_cash > 5_000_000:
                     # INNOVATION NEEDED: Investiere in F&E für neues Produkt
                     price = avg_price * random.uniform(0.9, 1.0)
-                    capacity = avg_capacity * random.uniform(0.8, 1.0)
+                    capacity = my_max_capacity * random.uniform(0.70, 0.85)  # Reduzierte Produktion während Transition
                     marketing = min(my_cash * 0.15, random.uniform(40000, 80000))
                     rd = min(my_cash * 0.20, random.uniform(100000, 200000))  # Hohe F&E!
                     quality = random.randint(5, 7)
@@ -1543,9 +1843,9 @@ class GameSession:
                     strategy = "INNOVATION_FOCUS"
 
                 else:
-                    # BALANCED STRATEGY: Folge dem Markt
+                    # BALANCED STRATEGY: Moderate Kapazitätsauslastung
                     price = avg_price * random.uniform(0.95, 1.05)
-                    capacity = avg_capacity * random.uniform(0.9, 1.1)
+                    capacity = my_max_capacity * random.uniform(0.80, 0.95)  # 80-95% Auslastung
                     marketing = min(my_cash * 0.15, random.uniform(40000, 80000))
                     rd = min(my_cash * 0.10, random.uniform(30000, 60000))
                     quality = int(avg_quality + random.uniform(-1, 1))
@@ -1557,18 +1857,18 @@ class GameSession:
                 # ABER: Viel konservativer um Bankrott zu vermeiden!
 
                 # 1. MASCHINEN-UPGRADE (nur wenn sehr profitabel & viel Cash!)
-                if my_cash > 6_000_000 and my_profit > 500_000 and self.current_quarter > 8 and firm.machines_class == MachineClass.BASIC:
+                if my_cash > 6_000_000 and my_profit > 500_000 and self.current_quarter > 8 and firm.machine_class == "basic":
                     try:
                         firm.upgrade_machines("professional")
                         print(f"[DEBUG] Bot {firm.id}: Upgraded machines to PROFESSIONAL")
-                    except:
-                        pass
-                elif my_cash > 10_000_000 and my_profit > 800_000 and self.current_quarter > 12 and firm.machines_class == MachineClass.PROFESSIONAL:
+                    except Exception as e:
+                        print(f"[ERROR] Bot {firm.id}: Machine upgrade failed: {e}")
+                elif my_cash > 10_000_000 and my_profit > 800_000 and self.current_quarter > 12 and firm.machine_class == "professional":
                     try:
                         firm.upgrade_machines("premium")
                         print(f"[DEBUG] Bot {firm.id}: Upgraded machines to PREMIUM")
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"[ERROR] Bot {firm.id}: Machine upgrade failed: {e}")
 
                 # 2. KREDITE AUFNEHMEN (nur im Notfall!)
                 if my_cash < 300_000 and firm.credit_rating >= 0.7 and len(firm.loans) < 1 and my_revenue > 1_500_000:
@@ -1608,7 +1908,92 @@ class GameSession:
 
         print(f"[DEBUG] Made decisions for {bot_count} bots out of {len(self.firms)} firms")
 
-    def calculate_acquisition_cost(self, target_firm: BusinessFirm) -> float:
+    def check_antitrust(self, acquirer_id: int, target_id: int, percentage: float) -> Dict:
+        """Prüft kartellrechtliche Zulässigkeit einer Übernahme"""
+        acquirer = self.get_firm_by_id(acquirer_id)
+        target = self.get_firm_by_id(target_id)
+        
+        if not acquirer or not target:
+            return {"allowed": False, "reason": "Firma nicht gefunden", "combined_market_share": 0}
+
+        # Berechne hypothetischen Marktanteil
+        # Wenn percentage < 100, addieren wir anteilig? Nein, Kartellrecht zählt oft Kontrolle.
+        # Vereinfacht: Wir addieren die Marktanteile.
+        current_share = acquirer.market_share
+        target_share = target.market_share
+        combined_share = current_share + target_share
+
+        # Kartellrechtliche Schwellen
+        DOMINANCE_THRESHOLD = 0.40  # 40% ist marktbeherrschend
+
+        if combined_share >= DOMINANCE_THRESHOLD:
+            return {
+                "allowed": False,
+                "reason": f"Marktbeherrschung ({combined_share*100:.1f}% > 40%)",
+                "combined_market_share": combined_share * 100
+            }
+        
+        return {
+            "allowed": True,
+            "reason": "Unbedenklich",
+            "combined_market_share": combined_share * 100
+        }
+
+    def acquire_firm(self, acquirer_id: int, target_id: int, percentage: float = 100.0) -> Dict:
+        """Führt eine Firmenübernahme durch"""
+        acquirer = self.get_firm_by_id(acquirer_id)
+        target = self.get_firm_by_id(target_id)
+        
+        if not acquirer or not target:
+            raise ValueError("Firma nicht gefunden")
+            
+        if acquirer_id == target_id:
+            raise ValueError("Selbstübernahme nicht möglich")
+
+        # 1. Kartellprüfung
+        antitrust = self.check_antitrust(acquirer_id, target_id, percentage)
+        if not antitrust['allowed']:
+            raise ValueError(f"Kartellamt untersagt Übernahme: {antitrust['reason']}")
+
+        # 2. Kosten berechnen
+        cost_info = self.calculate_acquisition_cost(target)
+        acquisition_price = cost_info['total_cost'] * (percentage / 100.0)
+
+        # 3. Finanzierungsprüfung
+        if acquirer.cash < acquisition_price:
+            raise ValueError(f"Nicht genug Bargeld. Benötigt: €{acquisition_price:,.2f}, Verfügbar: €{acquirer.cash:,.2f}")
+
+        # 4. Durchführung
+        acquirer.cash -= acquisition_price
+        target_shareholders_cash = acquisition_price # Geht an die alten Eigentümer (aus dem System raus, oder an Bots)
+        
+        # Assets übertragen (anteilig)
+        transfer_ratio = percentage / 100.0
+        
+        inventory_transfer = int(target.inventory_level * transfer_ratio)
+        capacity_transfer = int(target.production_capacity * transfer_ratio)
+        machines_transfer = int(target.machines * transfer_ratio)
+        
+        acquirer.inventory_level += inventory_transfer
+        acquirer.production_capacity += capacity_transfer
+        acquirer.machines += machines_transfer
+        
+        target.inventory_level -= inventory_transfer
+        target.production_capacity -= capacity_transfer
+        target.machines -= machines_transfer
+
+        # Goodwill Berechnung (Kaufpreis - Buchwert des Anteils)
+        book_value_share = target.equity * transfer_ratio
+        goodwill = max(0, acquisition_price - book_value_share)
+
+        return {
+            "message": f"Übernahme von {percentage}% an {target.name} erfolgreich",
+            "price": acquisition_price,
+            "goodwill": goodwill,
+            "new_cash": acquirer.cash
+        }
+
+    def calculate_acquisition_cost(self, target_firm: BusinessFirm) -> Dict:
         """Berechnet Aufkaufpreis basierend auf Unternehmenswert"""
         # BEWERTUNGSFORMEL - Berücksichtigt mehrere Faktoren:
         # 1. Cash + Inventarwert + Sachwerte (20% Premium)

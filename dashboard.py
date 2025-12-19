@@ -9,16 +9,18 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objs as go
 import requests
 from datetime import datetime
-
-# API Endpoint (kann via ENV überschrieben werden für Docker)
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+from state import game  # Direkter Zugriff auf den Spielstatus
+from models import DecisionInput  # Für Typ-Sicherheit
 
 # Dash App mit Bootstrap Theme
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.FONT_AWESOME],
-    suppress_callback_exceptions=True
+    suppress_callback_exceptions=True,
+    requests_pathname_prefix='/'
 )
+
+server = app.server
 
 app.title = "BWL Planspiel"
 
@@ -611,8 +613,8 @@ def create_production_inventory_status(firm_data):
 def create_market_volume_card():
     """Marktvolumen-Übersicht"""
     try:
-        response = requests.get(f"{API_URL}/api/market", timeout=2)
-        market_data = response.json()
+        # Direkter Zugriff auf Game State
+        market_data = game.get_market_overview()
 
         firms = market_data.get('firms', [])
         total_market_volume = sum(f.get('revenue', 0) for f in firms)
@@ -656,29 +658,21 @@ def create_market_volume_card():
 def create_market_volume_graph():
     """Marktvolumen über Zeit - Zeigt Gesamtmarktentwicklung"""
     try:
-        # Hole alle Firmen mit History
-        response = requests.get(f"{API_URL}/api/firms", timeout=2)
-        if response.status_code != 200:
-            return dbc.Alert("Marktdaten nicht verfügbar", color="warning", className="mb-4")
-
-        data = response.json()
-        firms = data.get('firms', [])
+        # Hole alle Firmen direkt aus dem Speicher
+        firms = game.firms.values()
 
         # Sammle alle Quarter-Revenue Daten von allen Firmen
         all_quarters = set()
         firm_histories = {}
 
         for firm in firms:
-            try:
-                firm_response = requests.get(f"{API_URL}/api/firms/{firm['id']}", timeout=2)
-                firm_data = firm_response.json()
-                history = firm_data.get('history', [])
+            # history ist direkt verfügbar im Objekt
+            history = firm.history
 
-                if history:
-                    firm_histories[firm['name']] = {h['quarter']: h['revenue'] for h in history}
-                    all_quarters.update(h['quarter'] for h in history)
-            except:
-                continue
+            if history:
+                # History ist eine Liste von Dicts
+                firm_histories[firm.name] = {h['quarter']: h['revenue'] for h in history}
+                all_quarters.update(h['quarter'] for h in history)
 
         if not all_quarters:
             return dbc.Alert("Noch keine historischen Daten verfügbar", color="info", className="mb-4")
@@ -913,34 +907,30 @@ def create_shares_overview_card(firm_data):
 
 def create_acquisition_card(firm_id):
     """M&A - Unternehmensübernahme Interface"""
-    try:
-        # Hole alle verfügbaren Firmen
-        response = requests.get(f"{API_URL}/api/firms", timeout=2)
-        firms_data = response.json()
-        firms = firms_data.get('firms', [])
+    return dbc.Card([
+        dbc.CardHeader(html.H5([
+            html.I(className="fas fa-handshake me-2"),
+            "M&A - Unternehmensübernahme"
+        ])),
+        dbc.CardBody([
+            html.P("Übernehmen Sie andere Firmen (Kartellamt prüft automatisch)", className="text-muted mb-3"),
 
-        # Filtere eigene Firma aus
-        target_firms = [f for f in firms if f['id'] != firm_id]
-
-        return dbc.Card([
-            dbc.CardHeader(html.H5([
-                html.I(className="fas fa-handshake me-2"),
-                "M&A - Unternehmensübernahme"
-            ])),
-            dbc.CardBody([
-                html.P("Übernehmen Sie andere Firmen (Kartellamt prüft automatisch)", className="text-muted mb-3"),
-
-                # Ziel-Firma auswählen
-                html.Label("Ziel-Firma auswählen:"),
-                dbc.Select(
-                    id="acquisition-target-select",
-                    options=[
-                        {"label": f"{f['name']} (Marktanteil: {f['market_share']:.1f}%)", "value": f['id']}
-                        for f in target_firms
-                    ],
-                    value=target_firms[0]['id'] if target_firms else None,
-                    className="mb-3"
-                ),
+            # Ziel-Firma auswählen (wird dynamisch via Callback aktualisiert)
+            html.Label("Ziel-Firma auswählen:", className="fw-bold mb-2"),
+            html.Div(
+                id="acquisition-target-container",
+                children=[
+                    dcc.Dropdown(
+                        id="acquisition-target-select",
+                        options=[],  # Wird via Callback gefüllt
+                        value=None,
+                        placeholder="Firma auswählen...",
+                        className="mb-3",
+                        clearable=False,
+                        searchable=True
+                    )
+                ]
+            ),
 
                 # Anteil wählen
                 html.Label("Anteil kaufen (%):"),
@@ -981,8 +971,6 @@ def create_acquisition_card(firm_id):
                 html.Div(id="acquisition-result", className="mt-3")
             ])
         ], className="shadow-sm mb-4")
-    except Exception as e:
-        return dbc.Alert(f"Fehler beim Laden der M&A-Daten: {str(e)}", color="danger", className="mb-4")
 
 
 def create_machine_upgrade_card(firm_data):
@@ -1036,7 +1024,7 @@ def create_machine_upgrade_card(firm_data):
     ], className="shadow-sm mb-4")
 
 
-def create_financing_card(firm_data):
+def create_financing_card(firm_data, loan_amount=500000, loan_quarters=12, shares_amount=1000000):
     """Finanzierungs-Interface: Kredite & Eigenkapitalerhöhung"""
     financing = firm_data.get('financing', {})
     loans = financing.get('loans', [])
@@ -1089,7 +1077,7 @@ def create_financing_card(firm_data):
             dbc.Input(
                 id="input-loan-amount",
                 type="number",
-                value=500000,
+                value=loan_amount,
                 min=100000,
                 max=available,
                 step=100000,
@@ -1107,7 +1095,7 @@ def create_financing_card(firm_data):
                     {"label": "16 Quartale (4 Jahre)", "value": 16},
                     {"label": "20 Quartale (5 Jahre)", "value": 20}
                 ],
-                value=12,
+                value=loan_quarters,
                 className="mb-3"
             ),
 
@@ -1128,7 +1116,7 @@ def create_financing_card(firm_data):
             dbc.Input(
                 id="input-shares-amount",
                 type="number",
-                value=1000000,
+                value=shares_amount,
                 min=500000,
                 max=10000000,
                 step=500000,
@@ -1148,7 +1136,7 @@ def create_financing_card(firm_data):
     ], className="shadow-sm mb-4")
 
 
-def create_personnel_card(firm_data):
+def create_personnel_card(firm_data, hire_qual="angelernt", hire_count=5, fire_qual="ungelernt", fire_count=5):
     """Personal-Management Interface"""
     personnel = firm_data.get('personnel', {})
     total_count = personnel.get('total_count', 0)
@@ -1217,14 +1205,14 @@ def create_personnel_card(firm_data):
                     {"label": "Angelernt (€12k/Q, 100% Produktivität)", "value": "angelernt"},
                     {"label": "Facharbeiter (€18k/Q, 140% Produktivität)", "value": "facharbeiter"}
                 ],
-                value="angelernt",
+                value=hire_qual,
                 className="mb-2"
             ),
             html.Label("Anzahl:"),
             dbc.Input(
                 id="input-hire-count",
                 type="number",
-                value=5,
+                value=hire_count,
                 min=1,
                 max=50,
                 step=1,
@@ -1249,14 +1237,14 @@ def create_personnel_card(firm_data):
                     {"label": "Angelernt", "value": "angelernt"},
                     {"label": "Facharbeiter", "value": "facharbeiter"}
                 ],
-                value="ungelernt",
+                value=fire_qual,
                 className="mb-2"
             ),
             html.Label("Anzahl:"),
             dbc.Input(
                 id="input-fire-count",
                 type="number",
-                value=5,
+                value=fire_count,
                 min=1,
                 max=20,
                 step=1,
@@ -1275,7 +1263,7 @@ def create_personnel_card(firm_data):
     ], className="shadow-sm mb-4")
 
 
-def create_innovation_card(firm_data):
+def create_innovation_card(firm_data, innovation_amount=1000000):
     """Innovation & Produktlebenszyklus Interface"""
     product = firm_data.get('product', {})
     lifecycle_stage = product.get('lifecycle_stage', 'introduction')
@@ -1347,7 +1335,7 @@ def create_innovation_card(firm_data):
             dbc.Input(
                 id="input-innovation-amount",
                 type="number",
-                value=1000000,
+                value=innovation_amount,
                 min=100000,
                 max=5000000,
                 step=100000,
@@ -1366,7 +1354,7 @@ def create_innovation_card(firm_data):
     ], className="shadow-sm mb-4")
 
 
-def create_balance_sheet_card(firm_data):
+def create_balance_sheet_card(firm_data, active_tab="tab-0"):
     """Bilanz & GuV Anzeige"""
     balance_sheet = firm_data.get('balance_sheet', {})
     income_statement = firm_data.get('income_statement', {})
@@ -1381,7 +1369,7 @@ def create_balance_sheet_card(firm_data):
         ])),
         dbc.CardBody([
             dbc.Tabs([
-                dbc.Tab(label="Bilanz", children=[
+                dbc.Tab(label="Bilanz", tab_id="tab-0", children=[
                     html.Div([
                         html.H6("AKTIVA (Assets)", className="text-primary mt-3 mb-2"),
                         dbc.ListGroup([
@@ -1456,7 +1444,7 @@ def create_balance_sheet_card(firm_data):
                     ], className="p-2")
                 ]),
 
-                dbc.Tab(label="GuV (P&L)", children=[
+                dbc.Tab(label="GuV (P&L)", tab_id="tab-1", children=[
                     html.Div([
                         dbc.ListGroup([
                             dbc.ListGroupItem([
@@ -1529,7 +1517,7 @@ def create_balance_sheet_card(firm_data):
                     ], className="p-2")
                 ]),
 
-                dbc.Tab(label="Deckungsbeitrag", children=[
+                dbc.Tab(label="Deckungsbeitrag", tab_id="tab-2", children=[
                     html.Div([
                         dbc.Alert([
                             html.H6("Deckungsbeitragsrechnung", className="mb-3"),
@@ -1553,7 +1541,7 @@ def create_balance_sheet_card(firm_data):
                         ], color="info", className="mt-3")
                     ], className="p-2")
                 ])
-            ])
+            ], id="balance-sheet-tabs", active_tab=active_tab)
         ])
     ], className="shadow-sm mb-4")
 
@@ -1694,58 +1682,70 @@ def create_dashboard_layout(firm_id, firm_data):
             html.Div(id="financial-trends-container", children=create_financial_trends_chart(firm_data)),
 
             dbc.Row([
+                # Linke Spalte: Operatives & Entscheidungen
                 dbc.Col([
-                    # Aktuelle Einstellungen (prominent, live-update)
+                    # Aktuelle Einstellungen (prominent)
                     html.Div(id="current-settings-container", children=create_current_settings_card(firm_data)),
-
-                    # Produktion & Lagerbestand Live-Anzeige
-                    create_production_inventory_status(firm_data),
-
-                    # NEUE FEATURES - Innovation & Produktlebenszyklus - LIVE UPDATE
-                    html.Div(id="innovation-container", children=create_innovation_card(firm_data)),
 
                     # Entscheidungsformular
                     create_decision_form(firm_data),
-                    create_cost_info(),
-                ], width=12, lg=8),
+                    
+                    # Produktion & Lagerbestand
+                    create_production_inventory_status(firm_data),
 
-                dbc.Col([
-                    # NEUE FEATURES - Maschinen-Upgrade - LIVE UPDATE
+                    # Maschinen-Upgrade
                     html.Div(id="machines-container", children=create_machine_upgrade_card(firm_data)),
+                    
+                    # Innovation
+                    html.Div(id="innovation-container", children=create_innovation_card(firm_data)),
+                    
+                    create_cost_info(),
+                ], width=12, lg=6),
 
-                    # NEUE FEATURES - Finanzierung (Kredite & Eigenkapital) - LIVE UPDATE
+                # Rechte Spalte: Finanzen, HR & M&A
+                dbc.Col([
+                    # Finanzierung (Kredite & Eigenkapital)
                     html.Div(id="financing-container", children=create_financing_card(firm_data)),
 
-                    # NEUE FEATURES - Personal-Management - LIVE UPDATE
+                    # Personal-Management
                     html.Div(id="personnel-container", children=create_personnel_card(firm_data)),
-
-                    # NEUE FEATURES - Bilanz & GuV - LIVE UPDATE
-                    html.Div(id="balance-sheet-container", children=create_balance_sheet_card(firm_data)),
-
-                    # Marktvolumen-Übersicht
-                    create_market_volume_card(),
-
-                    # Kostenstruktur-Karte - LIVE UPDATE
-                    html.Div(id="cost-structure-container", children=create_cost_structure_card(firm_data)),
-
-                    # Marktvolumen-Graph
-                    create_market_volume_graph(),
-
-                    # Aktien-Übersicht
-                    create_shares_overview_card(firm_data),
 
                     # M&A-Übernahme Interface
                     create_acquisition_card(firm_id),
+                    
+                    # Aktien-Übersicht
+                    create_shares_overview_card(firm_data),
+                    
+                    # Marktvolumen-Übersicht & Graph
+                    create_market_volume_card(),
+                    create_market_volume_graph(),
+                ], width=12, lg=6),
+            ]),
+            
+            html.Hr(className="my-4"),
+            html.H4("Berichte & Marktdaten", className="mb-3 text-center"),
 
-                    # Marktübersicht - live aktualisiert
+            # Untere Zeile: Tabellen & Detaillierte Daten (Volle Breite / Mittig)
+            dbc.Row([
+                dbc.Col([
+                    # Marktübersicht Tabelle
                     html.Div(id="market-overview-container", children=create_market_table({"firms": []})),
-                ], width=12, lg=4),
+                ], width=12, lg=6),
+                
+                dbc.Col([
+                    # Bilanz & GuV
+                    html.Div(id="balance-sheet-container", children=create_balance_sheet_card(firm_data)),
+                    
+                    # Kostenstruktur
+                    html.Div(id="cost-structure-container", children=create_cost_structure_card(firm_data)),
+                ], width=12, lg=6),
             ]),
 
             # Hidden stores
             dcc.Store(id="firm-id-store", data=firm_id),
             dcc.Store(id="historical-data-store", data=historical_data),  # Initialize with history from backend
-            dcc.Interval(id="refresh-interval", interval=1000, n_intervals=0),  # 1s refresh for LIVE timer
+            dcc.Interval(id="refresh-interval", interval=5000, n_intervals=0),  # 5s refresh for data
+            dcc.Interval(id="timer-interval", interval=1000, n_intervals=0),  # 1s refresh for timer
         ], fluid=True)
     ])
 
@@ -1753,13 +1753,31 @@ def create_dashboard_layout(firm_id, firm_data):
 # ============ MAIN APP LAYOUT ============
 
 app.layout = html.Div([
-    dcc.Location(id="url", refresh=True),  # Enable page refresh
+    dcc.Location(id="url", refresh=False),  # Disable full page refresh - use callbacks instead
     dcc.Store(id="session-store", storage_type='session'),  # Session storage - cleared on tab close
     html.Div(id="page-content")
 ])
 
 
 # ============ CALLBACKS ============
+
+@app.callback(
+    Output("quarter-timer", "children"),
+    Input("timer-interval", "n_intervals")
+)
+def update_timer_only(n):
+    """Sekündliches Update nur für den Timer"""
+    try:
+        # Direkter Zugriff
+        time_left = game.get_time_remaining()
+        quarter = game.current_quarter
+        
+        minutes = time_left // 60
+        seconds = time_left % 60
+        return f"Quartal {quarter} | {minutes:02d}:{seconds:02d} bis zum nächsten Quartal"
+    except:
+        return "Verbindung..."
+
 
 @app.callback(
     Output("page-content", "children"),
@@ -1769,11 +1787,12 @@ app.layout = html.Div([
 def display_page(pathname, session_data):
     """Route between login and dashboard"""
     if session_data and session_data.get("firm_id"):
-        # Fetch firm data
+        # Fetch firm data directly
         try:
-            response = requests.get(f"{API_URL}/api/firms/{session_data['firm_id']}")
-            firm_data = response.json()
-            return create_dashboard_layout(session_data["firm_id"], firm_data)
+            firm = game.get_firm_by_id(session_data['firm_id'])
+            if firm:
+                return create_dashboard_layout(session_data["firm_id"], firm.to_dict())
+            return create_login_form()
         except:
             return create_login_form()
     return create_login_form()
@@ -1793,18 +1812,18 @@ def create_firm(n_clicks, user_name, firm_name):
         return dash.no_update, dbc.Alert("Bitte alle Felder ausfüllen", color="warning")
 
     try:
-        response = requests.post(
-            f"{API_URL}/api/firms",
-            json={"user_name": user_name, "firm_name": firm_name},
-            timeout=5
-        )
-        if response.status_code == 200:
-            data = response.json()
-            return {"firm_id": data["firm_id"]}, dbc.Alert("Firma erfolgreich erstellt!", color="success")
-        else:
-            return dash.no_update, dbc.Alert(f"Fehler: {response.json().get('detail', 'Unbekannt')}", color="danger")
+        # Check duplicate
+        if game.get_firm_by_user(user_name):
+            return dash.no_update, dbc.Alert("User bereits registriert", color="warning")
+
+        firm = game.create_firm(firm_name, user_name)
+        
+        # Wir müssen hier manuell keine Broadcasts machen, da das Dashboard sich selbst updated
+        # und die API für andere Clients zuständig wäre.
+        
+        return {"firm_id": firm.id}, dbc.Alert("Firma erfolgreich erstellt!", color="success")
     except Exception as e:
-        return dash.no_update, dbc.Alert(f"Verbindungsfehler: {str(e)}", color="danger")
+        return dash.no_update, dbc.Alert(f"Fehler: {str(e)}", color="danger")
 
 
 @app.callback(
@@ -1816,41 +1835,44 @@ def create_firm(n_clicks, user_name, firm_name):
 def load_firms_list(n_clicks, pathname):
     """Load list of available firms"""
     try:
-        response = requests.get(f"{API_URL}/api/firms", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            firms = data.get("firms", [])
+        firms_data = []
+        for firm in game.firms.values():
+            firms_data.append({
+                "id": firm.id,
+                "name": firm.name,
+                "user_count": len(firm.user_names),
+                "market_share": round(firm.market_share * 100, 2),
+                "cash": round(firm.cash, 0)
+            })
 
-            if not firms:
-                return dbc.Alert("Noch keine Firmen vorhanden", color="info", className="mt-2")
+        if not firms_data:
+            return dbc.Alert("Noch keine Firmen vorhanden", color="info", className="mt-2")
 
-            # Create radio options with firm details
-            options = []
-            for firm in firms:
-                label = html.Div([
-                    html.Strong(firm["name"]),
-                    html.Br(),
-                    html.Small([
-                        f"Mitglieder: {firm['user_count']} | ",
-                        f"Marktanteil: {firm['market_share']}% | ",
-                        f"Cash: €{format_de(firm['cash'])}"
-                    ], className="text-muted")
-                ])
-                options.append({
-                    "label": firm["name"] + f" ({firm['user_count']} Mitglieder)",
-                    "value": firm["id"]
-                })
+        # Create radio options with firm details
+        options = []
+        for firm in firms_data:
+            label = html.Div([
+                html.Strong(firm["name"]),
+                html.Br(),
+                html.Small([
+                    f"Mitglieder: {firm['user_count']} | ",
+                    f"Marktanteil: {firm['market_share']}% | ",
+                    f"Cash: €{format_de(firm['cash'])}"
+                ], className="text-muted")
+            ])
+            options.append({
+                "label": firm["name"] + f" ({firm['user_count']} Mitglieder)",
+                "value": firm["id"]
+            })
 
-            return dbc.RadioItems(
-                id="firm-selector",
-                options=options,
-                value=None,
-                className="mb-3"
-            )
-        else:
-            return dbc.Alert("Fehler beim Laden der Firmen", color="danger")
+        return dbc.RadioItems(
+            id="firm-selector",
+            options=options,
+            value=None,
+            className="mb-3"
+        )
     except Exception as e:
-        return dbc.Alert(f"Verbindungsfehler: {str(e)}", color="danger")
+        return dbc.Alert(f"Fehler: {str(e)}", color="danger")
 
 
 @app.callback(
@@ -1883,18 +1905,17 @@ def join_firm(n_clicks, user_name, firm_id):
         return dash.no_update, dbc.Alert("Bitte Firma auswählen", color="warning")
 
     try:
-        response = requests.post(
-            f"{API_URL}/api/firms/{firm_id}/join",
-            json={"user_name": user_name},
-            timeout=5
-        )
-        if response.status_code == 200:
-            data = response.json()
-            return {"firm_id": data["firm_id"]}, dbc.Alert("Erfolgreich beigetreten!", color="success")
+        # Check duplicate
+        if game.get_firm_by_user(user_name):
+            return dash.no_update, dbc.Alert("User bereits in einer Firma", color="warning")
+
+        success = game.add_user_to_firm(firm_id, user_name)
+        if success:
+            return {"firm_id": firm_id}, dbc.Alert("Erfolgreich beigetreten!", color="success")
         else:
-            return dash.no_update, dbc.Alert(f"Fehler: {response.json().get('detail', 'Unbekannt')}", color="danger")
+            return dash.no_update, dbc.Alert("Fehler beim Beitreten", color="danger")
     except Exception as e:
-        return dash.no_update, dbc.Alert(f"Verbindungsfehler: {str(e)}", color="danger")
+        return dash.no_update, dbc.Alert(f"Fehler: {str(e)}", color="danger")
 
 
 @app.callback(
@@ -1920,113 +1941,36 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
     """Submit decision callback mit Validierung"""
     # Hole aktuelle Firma für Validierung
     try:
-        firm_response = requests.get(f"{API_URL}/api/firms/{firm_id}", timeout=2)
-        firm_data = firm_response.json()
-        cash = firm_data.get('cash', 0)
-
-        # Convert None/invalid to 0 for optional numeric fields
-        # This handles empty fields, None, and any other non-numeric values
-        def safe_numeric(value, default=0):
-            """Convert any value to numeric, defaulting to 0 if invalid"""
-            if value is None or value == "" or value == "":
-                return default
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return default
-
-        marketing = safe_numeric(marketing, 0)
-        rd = safe_numeric(rd, 0)
-        process_opt = safe_numeric(process_opt, 0)
-        supplier_neg = safe_numeric(supplier_neg, 0)
-        overhead_red = safe_numeric(overhead_red, 0)
-
-        # VALIDIERUNG
-        errors = []
-
-        # Preis Validierung
-        if price is None or price < 50 or price > 500:
-            errors.append("Produktpreis muss zwischen €50 und €500 liegen")
-
-        # Kapazität Validierung
-        if capacity is None or capacity < 0 or capacity > 500000:
-            errors.append("Produktionskapazität muss zwischen 0 und 500.000 Einheiten liegen")
-
-        # Marketing Validierung - nur Negativprüfung, kein Maximum
-        if marketing < 0:
-            errors.append("Marketing Budget kann nicht negativ sein")
-
-        # F&E Validierung - nur Negativprüfung, kein Maximum
-        if rd < 0:
-            errors.append("F&E Budget kann nicht negativ sein")
-
-        # Qualität Validierung
-        if quality is None or quality < 1 or quality > 10:
-            errors.append("Qualitätslevel muss zwischen 1 und 10 liegen")
-
-        # JIT Validierung
-        if jit is None or jit < 0 or jit > 100:
-            errors.append("JIT Safety Stock muss zwischen 0% und 100% liegen")
-
-        # Kostenoptimierungs-Validierung - nur Negativprüfung, kein Maximum
-        if process_opt < 0:
-            errors.append("Prozessoptimierung kann nicht negativ sein")
-
-        if supplier_neg < 0:
-            errors.append("Lieferantenverhandlungen kann nicht negativ sein")
-
-        if overhead_red < 0:
-            errors.append("Verwaltungsoptimierung kann nicht negativ sein")
-
-        # Abschreibungsraten Validierung
-        if buildings_depr is not None and (buildings_depr < 0.1 or buildings_depr > 5.0):
-            errors.append("AfA-Rate Gebäude muss zwischen 0.1% und 5.0% liegen")
-        if machines_depr is not None and (machines_depr < 0.1 or machines_depr > 5.0):
-            errors.append("AfA-Rate Maschinen muss zwischen 0.1% und 5.0% liegen")
-        if equipment_depr is not None and (equipment_depr < 0.1 or equipment_depr > 5.0):
-            errors.append("AfA-Rate Ausstattung muss zwischen 0.1% und 5.0% liegen")
-
-        # Wenn Fehler, zeige alle
-        if errors:
-            error_msg = html.Div([
-                html.H6("Validierungsfehler:", className="text-danger mb-2"),
-                html.Ul([html.Li(err) for err in errors])
-            ])
-            return dbc.Alert(error_msg, color="danger", dismissable=True)
-
-        # Alle Validierungen bestanden - Submit
-        response = requests.post(
-            f"{API_URL}/api/firms/{firm_id}/decision",
-            json={
-                "product_price": price,
-                "production_capacity": capacity,
-                "marketing_budget": marketing,
-                "rd_budget": rd,
-                "quality_level": quality,
-                "jit_safety_stock": jit,
-                "process_optimization": process_opt or 0,
-                "supplier_negotiation": supplier_neg or 0,
-                "overhead_reduction": overhead_red or 0,
-                "buildings_depreciation": buildings_depr,
-                "machines_depreciation": machines_depr,
-                "equipment_depreciation": equipment_depr
-            }
+        # Create decision object
+        decision = DecisionInput(
+            product_price=price,
+            production_capacity=capacity,
+            marketing_budget=marketing,
+            rd_budget=rd,
+            quality_level=quality,
+            jit_safety_stock=jit,
+            process_optimization=process_opt or 0,
+            supplier_negotiation=supplier_neg or 0,
+            overhead_reduction=overhead_red or 0,
+            buildings_depreciation=buildings_depr,
+            machines_depreciation=machines_depr,
+            equipment_depreciation=equipment_depr
         )
-        if response.status_code == 200:
-            success_msg = html.Div([
-                html.H6("Erfolgreich gespeichert!", className="text-success mb-2"),
-                html.P("Deine Entscheidungen werden im nächsten Quartal wirksam.", className="mb-0")
-            ])
-            return dbc.Alert(success_msg, color="success", dismissable=True, duration=4000)
-        else:
-            return dbc.Alert(f"Fehler: {response.json().get('detail', 'Unbekannt')}", color="danger")
+
+        result = game.process_decision(firm_id, decision)
+        
+        success_msg = html.Div([
+            html.H6("Erfolgreich gespeichert!", className="text-success mb-2"),
+            html.P("Deine Entscheidungen werden im nächsten Quartal wirksam.", className="mb-0")
+        ])
+        return dbc.Alert(success_msg, color="success", dismissable=True, duration=4000)
+
     except Exception as e:
-        return dbc.Alert(f"Verbindungsfehler: {str(e)}", color="danger")
+        return dbc.Alert(f"Fehler: {str(e)}", color="danger")
 
 
 @app.callback(
-    [Output("quarter-timer", "children"),
-     Output("kpi-container", "children"),
+    [Output("kpi-container", "children"),
      Output("current-settings-container", "children"),
      Output("market-overview-container", "children"),
      Output("live-status-display", "children"),
@@ -2035,7 +1979,6 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
      Output("historical-data-store", "data"),
      # NEUE AUTO-REFRESH OUTPUTS:
      Output("liquidity-warning-container", "children"),
-     Output("financial-trends-container", "children"),
      Output("innovation-container", "children"),
      Output("machines-container", "children"),
      Output("financing-container", "children"),
@@ -2044,13 +1987,31 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
      Output("cost-structure-container", "children")],
     [Input("refresh-interval", "n_intervals"),
      Input("firm-id-store", "data")],
-    State("historical-data-store", "data")
+    [State("historical-data-store", "data"),
+     State("balance-sheet-tabs", "active_tab"),
+     # Inputs to preserve state for:
+     # Financing
+     State("input-loan-amount", "value"),
+     State("input-loan-quarters", "value"),
+     State("input-shares-amount", "value"),
+     # Personnel
+     State("input-hire-qualification", "value"),
+     State("input-hire-count", "value"),
+     State("input-fire-qualification", "value"),
+     State("input-fire-count", "value"),
+     # Innovation
+     State("input-innovation-amount", "value")]
 )
-def live_update_dashboard(n, firm_id, historical_data):
-    """Live-Update ALLER Dashboard-Elemente inkl. neuer Features (1s Intervall)"""
+def live_update_dashboard(n, firm_id, historical_data, active_tab,
+                         # Financing
+                         loan_amount, loan_quarters, shares_amount,
+                         # Personnel
+                         hire_qual, hire_count, fire_qual, fire_count,
+                         # Innovation
+                         innovation_amount):
+    """Live-Update ALLER Dashboard-Elemente inkl. neuer Features (5s Intervall)"""
     if not firm_id:
         return (
-            "Keine Firma",
             dash.no_update,
             dash.no_update,
             dash.no_update,
@@ -2060,7 +2021,6 @@ def live_update_dashboard(n, firm_id, historical_data):
             historical_data,
             # Neue Outputs:
             dash.no_update,  # liquidity-warning
-            dash.no_update,  # financial-trends
             dash.no_update,  # innovation
             dash.no_update,  # machines
             dash.no_update,  # financing
@@ -2070,24 +2030,14 @@ def live_update_dashboard(n, firm_id, historical_data):
         )
 
     try:
-        # Fetch quarter status
-        quarter_response = requests.get(f"{API_URL}/api/quarter", timeout=2)
-        quarter_data = quarter_response.json()
-        time_left = quarter_data.get("time_remaining", 0)
-        quarter = quarter_data.get("current_quarter", 0)
+        # Fetch firm data directly
+        firm = game.get_firm_by_id(firm_id)
+        if not firm:
+            raise ValueError("Firma nicht gefunden")
+        firm_data = firm.to_dict()
 
-        # Fetch firm data
-        firm_response = requests.get(f"{API_URL}/api/firms/{firm_id}", timeout=2)
-        firm_data = firm_response.json()
-
-        # Fetch market data
-        market_response = requests.get(f"{API_URL}/api/market", timeout=2)
-        market_data = market_response.json()
-
-        # Update timer
-        minutes = time_left // 60
-        seconds = time_left % 60
-        timer_text = f"Quartal {quarter} | {minutes:02d}:{seconds:02d} bis zum nächsten Quartal"
+        # Fetch market data directly
+        market_data = game.get_market_overview()
 
         # Update KPIs
         kpis = create_dashboard_kpis(firm_data)
@@ -2154,16 +2104,34 @@ def live_update_dashboard(n, firm_id, historical_data):
 
         # NEUE KARTEN UPDATEN:
         liquidity_card = create_liquidity_warning_card(firm_data)
-        financial_trends = create_financial_trends_chart(firm_data)
-        innovation_card = create_innovation_card(firm_data)
+        
+        # Innovation (State Preserved)
+        innovation_val = innovation_amount if innovation_amount is not None else 1000000
+        innovation_card = create_innovation_card(firm_data, innovation_amount=innovation_val)
+        
         machines_card = create_machine_upgrade_card(firm_data)
-        financing_card = create_financing_card(firm_data)
-        personnel_card = create_personnel_card(firm_data)
-        balance_sheet_card = create_balance_sheet_card(firm_data)
+        
+        # Financing (State Preserved)
+        loan_amt = loan_amount if loan_amount is not None else 500000
+        loan_q = loan_quarters if loan_quarters is not None else 12
+        shares_amt = shares_amount if shares_amount is not None else 1000000
+        financing_card = create_financing_card(firm_data, loan_amount=loan_amt, loan_quarters=loan_q, shares_amount=shares_amt)
+        
+        # Personnel (State Preserved)
+        h_qual = hire_qual if hire_qual else "angelernt"
+        h_count = hire_count if hire_count is not None else 5
+        f_qual = fire_qual if fire_qual else "ungelernt"
+        f_count = fire_count if fire_count is not None else 5
+        personnel_card = create_personnel_card(firm_data, hire_qual=h_qual, hire_count=h_count, fire_qual=f_qual, fire_count=f_count)
+        
+        # Balance Sheet mit State Preservation
+        # Default zu tab-0 wenn None
+        current_tab = active_tab if active_tab else "tab-0"
+        balance_sheet_card = create_balance_sheet_card(firm_data, active_tab=current_tab)
+        
         cost_structure_card = create_cost_structure_card(firm_data)
 
         return (
-            timer_text,
             kpis,
             current_settings,
             market_table,
@@ -2173,7 +2141,6 @@ def live_update_dashboard(n, firm_id, historical_data):
             historical_data,
             # Neue Karten:
             liquidity_card,
-            financial_trends,
             innovation_card,
             machines_card,
             financing_card,
@@ -2183,18 +2150,20 @@ def live_update_dashboard(n, firm_id, historical_data):
         )
 
     except Exception as e:
+        import traceback
+        error_msg = f"Fehler: {type(e).__name__}: {str(e)}"
+        print(f"[Dashboard Error] {error_msg}")
+        print(traceback.format_exc())
         return (
-            "Verbindung zum Server...",
             dash.no_update,
             dash.no_update,
             dash.no_update,
             dash.no_update,
             "fas fa-circle text-danger me-2",
-            f"Verbindungsfehler",
+            error_msg,
             historical_data,
             # Neue Outputs:
             dash.no_update,  # liquidity-warning
-            dash.no_update,  # financial-trends
             dash.no_update,  # innovation
             dash.no_update,  # machines
             dash.no_update,  # financing
@@ -2293,6 +2262,39 @@ def leave_firm(n_clicks):
 # ============ M&A CALLBACKS ============
 
 @app.callback(
+    Output("acquisition-target-select", "options"),
+    [Input("url", "pathname"),
+     Input("firm-id-store", "data")]
+)
+def load_acquisition_targets(pathname, firm_id):
+    """Lädt verfügbare Ziel-Firmen für M&A (alle außer eigene Firma)"""
+    if not firm_id:
+        return []
+
+    try:
+        # Direkter Zugriff
+        firms = game.firms.values()
+
+        # Filtere eigene Firma aus und sortiere nach Marktanteil
+        available_firms = [f for f in firms if f.id != firm_id]
+        available_firms.sort(key=lambda x: x.market_share, reverse=True)
+
+        # Erstelle RadioItems mit detaillierten Informationen
+        target_options = [
+            {
+                "label": firm.name,
+                "value": firm.id
+            }
+            for firm in available_firms
+        ]
+
+        return target_options
+    except Exception as e:
+        print(f"[ERROR] Failed to load acquisition targets: {e}")
+        return []
+
+
+@app.callback(
     [Output("valuation-result", "children"),
      Output("antitrust-check", "children"),
      Output("btn-execute-acquisition", "disabled")],
@@ -2308,9 +2310,12 @@ def calculate_acquisition_valuation(n_clicks, acquirer_id, target_id, percentage
         return None, None, True
 
     try:
+        target_firm = game.get_firm_by_id(target_id)
+        if not target_firm:
+            return dbc.Alert("Firma nicht gefunden", color="danger"), None, True
+
         # Hole Bewertung
-        val_response = requests.get(f"{API_URL}/api/firms/{target_id}/valuation", timeout=2)
-        valuation = val_response.json()
+        valuation = game.calculate_acquisition_cost(target_firm)
 
         # Berechne Preis für gewählten Anteil
         base_value = valuation['enterprise_value']
@@ -2325,12 +2330,7 @@ def calculate_acquisition_valuation(n_clicks, acquirer_id, target_id, percentage
         ], color="light")
 
         # Kartellamt-Prüfung
-        antitrust_response = requests.get(
-            f"{API_URL}/api/antitrust/check",
-            params={"acquirer_id": acquirer_id, "target_id": target_id, "percentage": percentage},
-            timeout=2
-        )
-        antitrust = antitrust_response.json()
+        antitrust = game.check_antitrust(acquirer_id, target_id, percentage)
 
         if antitrust['allowed']:
             antitrust_card = dbc.Alert([
@@ -2365,33 +2365,22 @@ def calculate_acquisition_valuation(n_clicks, acquirer_id, target_id, percentage
 def execute_acquisition(n_clicks, acquirer_id, target_id, percentage):
     """Führt Übernahme durch"""
     try:
-        response = requests.post(
-            f"{API_URL}/api/acquisitions",
-            json={
-                "acquirer_firm_id": acquirer_id,
-                "target_firm_id": target_id,
-                "percentage": percentage
-            },
-            timeout=5
-        )
+        result = game.acquire_firm(acquirer_id, target_id, percentage)
+        
+        return dbc.Alert([
+            html.I(className="fas fa-check-circle me-2"),
+            html.Strong("Übernahme erfolgreich!"),
+            html.Br(),
+            html.P(result['message'], className="mb-0 mt-2")
+        ], color="success", dismissable=True, duration=5000)
 
-        if response.status_code == 200:
-            result = response.json()
-            return dbc.Alert([
-                html.I(className="fas fa-check-circle me-2"),
-                html.Strong("Übernahme erfolgreich!"),
-                html.Br(),
-                html.P(result['message'], className="mb-0 mt-2")
-            ], color="success", dismissable=True, duration=5000)
-        else:
-            error_detail = response.json().get('detail', 'Unbekannter Fehler')
-            return dbc.Alert([
+    except ValueError as ve:
+        return dbc.Alert([
                 html.I(className="fas fa-times-circle me-2"),
                 html.Strong("Übernahme fehlgeschlagen:"),
                 html.Br(),
-                html.P(error_detail, className="mb-0 mt-2")
+                html.P(str(ve), className="mb-0 mt-2")
             ], color="danger", dismissable=True)
-
     except Exception as e:
         return dbc.Alert(f"Fehler bei Übernahme: {str(e)}", color="danger", dismissable=True)
 
@@ -2407,28 +2396,19 @@ def execute_acquisition(n_clicks, acquirer_id, target_id, percentage):
 def upgrade_machines(n_clicks, firm_id):
     """Maschinen upgraden"""
     try:
-        # Hole aktuelle Maschinenklasse
-        firm_response = requests.get(f"{API_URL}/api/firms/{firm_id}", timeout=2)
-        firm_data = firm_response.json()
-        current_class = firm_data.get('machines', {}).get('class', 'basic')
+        firm = game.get_firm_by_id(firm_id)
+        if not firm:
+            return dbc.Alert("Firma nicht gefunden", color="danger")
+            
+        success, message = firm.upgrade_machines("premium")
 
-        # Bestimme Zielklasse
-        target_class = 'professional' if current_class == 'basic' else 'premium'
-
-        response = requests.post(
-            f"{API_URL}/api/firms/{firm_id}/machines/upgrade",
-            json={"target_class": target_class},
-            timeout=5
-        )
-
-        if response.status_code == 200:
-            result = response.json()
+        if success:
             return dbc.Alert([
                 html.I(className="fas fa-check-circle me-2"),
-                result['message']
+                message
             ], color="success", dismissable=True, duration=4000)
         else:
-            return dbc.Alert(response.json().get('detail', 'Fehler'), color="danger", dismissable=True)
+            return dbc.Alert(message, color="danger", dismissable=True)
 
     except Exception as e:
         return dbc.Alert(f"Fehler: {str(e)}", color="danger", dismissable=True)
@@ -2436,7 +2416,7 @@ def upgrade_machines(n_clicks, firm_id):
 
 @app.callback(
     Output("financing-feedback", "children"),
-    [Input("btn-take-loan", "n_clicks"),
+    [Input("btn-request-loan", "n_clicks"),
      Input("btn-issue-shares", "n_clicks")],
     [State("firm-id-store", "data"),
      State("input-loan-amount", "value"),
@@ -2445,38 +2425,32 @@ def upgrade_machines(n_clicks, firm_id):
     prevent_initial_call=True
 )
 def handle_financing(loan_clicks, shares_clicks, firm_id, loan_amount, loan_quarters, shares_amount):
-    """Finanzierung: Kredite oder Aktien ausgeben"""
+    """Kredite aufnehmen oder Aktien ausgeben"""
     ctx = callback_context
-
     if not ctx.triggered:
         return dash.no_update
 
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
     try:
-        if button_id == "btn-take-loan":
-            response = requests.post(
-                f"{API_URL}/api/firms/{firm_id}/financing/loan",
-                json={"amount": loan_amount, "quarters": loan_quarters},
-                timeout=5
-            )
+        firm = game.get_firm_by_id(firm_id)
+        if not firm:
+            return dbc.Alert("Firma nicht gefunden", color="danger")
+
+        if button_id == "btn-request-loan":
+            success, message = firm.take_loan(loan_amount, loan_quarters)
         elif button_id == "btn-issue-shares":
-            response = requests.post(
-                f"{API_URL}/api/firms/{firm_id}/financing/issue-shares",
-                json={"amount": shares_amount},
-                timeout=5
-            )
+            success, message = firm.issue_shares(shares_amount)
         else:
             return dash.no_update
 
-        if response.status_code == 200:
-            result = response.json()
+        if success:
             return dbc.Alert([
                 html.I(className="fas fa-check-circle me-2"),
-                result['message']
+                message
             ], color="success", dismissable=True, duration=4000)
         else:
-            return dbc.Alert(response.json().get('detail', 'Fehler'), color="danger", dismissable=True)
+            return dbc.Alert(message, color="danger", dismissable=True)
 
     except Exception as e:
         return dbc.Alert(f"Fehler: {str(e)}", color="danger", dismissable=True)
@@ -2503,29 +2477,24 @@ def handle_personnel(hire_clicks, fire_clicks, firm_id, hire_qual, hire_count, f
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
     try:
+        firm = game.get_firm_by_id(firm_id)
+        if not firm:
+            return dbc.Alert("Firma nicht gefunden", color="danger")
+
         if button_id == "btn-hire-personnel":
-            response = requests.post(
-                f"{API_URL}/api/firms/{firm_id}/personnel/hire",
-                json={"qualification": hire_qual, "count": hire_count},
-                timeout=5
-            )
+            success, message = firm.hire_personnel(hire_qual, hire_count)
         elif button_id == "btn-fire-personnel":
-            response = requests.post(
-                f"{API_URL}/api/firms/{firm_id}/personnel/fire",
-                json={"qualification": fire_qual, "count": fire_count},
-                timeout=5
-            )
+            success, message = firm.fire_personnel(fire_qual, fire_count)
         else:
             return dash.no_update
 
-        if response.status_code == 200:
-            result = response.json()
+        if success:
             return dbc.Alert([
                 html.I(className="fas fa-check-circle me-2"),
-                result['message']
+                message
             ], color="success", dismissable=True, duration=4000)
         else:
-            return dbc.Alert(response.json().get('detail', 'Fehler'), color="danger", dismissable=True)
+            return dbc.Alert(message, color="danger", dismissable=True)
 
     except Exception as e:
         return dbc.Alert(f"Fehler: {str(e)}", color="danger", dismissable=True)
@@ -2541,32 +2510,23 @@ def handle_personnel(hire_clicks, fire_clicks, firm_id, hire_qual, hire_count, f
 def invest_innovation(n_clicks, firm_id, amount):
     """Innovation investieren"""
     try:
-        response = requests.post(
-            f"{API_URL}/api/firms/{firm_id}/innovation/invest",
-            json={"amount": amount},
-            timeout=5
-        )
+        firm = game.get_firm_by_id(firm_id)
+        if not firm:
+            return dbc.Alert("Firma nicht gefunden", color="danger")
+            
+        if firm.cash < amount:
+             return dbc.Alert(f"Nicht genug Cash. Verfügbar: €{format_de(firm.cash)}", color="danger")
+             
+        # Logic duplicated from main.py as it is not in models
+        firm.cash -= amount
+        firm.innovation_investment += amount
 
-        if response.status_code == 200:
-            result = response.json()
-            return dbc.Alert([
-                html.I(className="fas fa-check-circle me-2"),
-                result['message'],
-                html.Br(),
-                html.Small(f"Total investiert: €{format_de(result.get('total_innovation_investment', 0))} / €5M", className="mt-2")
-            ], color="success", dismissable=True, duration=4000)
-        else:
-            return dbc.Alert(response.json().get('detail', 'Fehler'), color="danger", dismissable=True)
+        return dbc.Alert([
+            html.I(className="fas fa-check-circle me-2"),
+            f"€{format_de(amount)} in Innovation investiert",
+            html.Br(),
+            html.Small(f"Total investiert: €{format_de(firm.innovation_investment)} / €5M", className="mt-2")
+        ], color="success", dismissable=True, duration=4000)
 
     except Exception as e:
         return dbc.Alert(f"Fehler: {str(e)}", color="danger", dismissable=True)
-
-
-if __name__ == "__main__":
-    print("""
-    ╔═══════════════════════════════════════════╗
-    ║   BWL Planspiel Dashboard                 ║
-    ║   Dashboard: http://localhost:8050        ║
-    ╚═══════════════════════════════════════════╝
-    """)
-    app.run(debug=True, host="0.0.0.0", port=8050)
