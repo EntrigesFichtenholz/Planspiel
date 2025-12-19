@@ -970,6 +970,10 @@ class BusinessFirm:
 
         Returns: (success, message)
         """
+        # WICHTIG: Nur ein Kredit gleichzeitig erlaubt
+        if len(self.loans) > 0:
+            return False, f"Du hast bereits einen laufenden Kredit! Zahle ihn zuerst ab."
+
         # Prüfe Kreditlimit
         total_debt = self.debt + amount
         if total_debt > self.max_loan_capacity:

@@ -1068,7 +1068,13 @@ def create_financing_card(firm_data, loan_amount=500000, loan_quarters=12, share
 
             html.Div([
                 dbc.Alert([
-                    html.Small(f"Betrag: €{format_de(loan.get('amount', 0))} | Zinssatz: {loan.get('interest_rate', 0)*100:.1f}% p.a. | Restlaufzeit: {loan.get('quarters_remaining', 0)} Q", className="mb-0")
+                    html.Div([
+                        html.Strong(f"Kredit: €{format_de(loan.get('original_amount', 0))}", className="d-block mb-1"),
+                        html.Small(f"Restbetrag: €{format_de(loan.get('amount', 0))}", className="d-block"),
+                        html.Small(f"Zinssatz: {loan.get('interest_rate', 0)*100:.1f}% p.a.", className="d-block"),
+                        html.Small(f"Quartalsrate: €{format_de(loan.get('quarterly_payment', 0))} (Tilgung + Zinsen)", className="d-block"),
+                        html.Small(f"Restlaufzeit: {loan.get('quarters_remaining', 0)} Quartale", className="d-block text-warning fw-bold")
+                    ])
                 ], color="light", className="mb-2")
                 for loan in loans
             ]) if loans else None,
@@ -2428,7 +2434,7 @@ def upgrade_machines(n_clicks, firm_id):
 
 @app.callback(
     Output("financing-feedback", "children"),
-    [Input("btn-request-loan", "n_clicks"),
+    [Input("btn-take-loan", "n_clicks"),
      Input("btn-issue-shares", "n_clicks")],
     [State("firm-id-store", "data"),
      State("input-loan-amount", "value"),
@@ -2449,7 +2455,7 @@ def handle_financing(loan_clicks, shares_clicks, firm_id, loan_amount, loan_quar
         if not firm:
             return dbc.Alert("Firma nicht gefunden", color="danger")
 
-        if button_id == "btn-request-loan":
+        if button_id == "btn-take-loan":
             success, message = firm.take_loan(loan_amount, loan_quarters)
         elif button_id == "btn-issue-shares":
             success, message = firm.issue_shares(shares_amount)
