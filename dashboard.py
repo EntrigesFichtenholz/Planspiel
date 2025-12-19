@@ -2105,7 +2105,8 @@ def live_update_dashboard(n, firm_id, historical_data, active_tab,
             dash.no_update,  # financing
             dash.no_update,  # personnel
             dash.no_update,  # balance-sheet
-            dash.no_update   # cost-structure
+            dash.no_update,  # cost-structure
+            dash.no_update   # market-share-chart
         )
 
     try:
