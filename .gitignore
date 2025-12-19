@@ -4,58 +4,40 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
-venv/
-ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+dist/
+build/
 
-# Environments
+# Environment
 .env
-.venv
-env/
+.env.local
 venv/
-ENV/
-env.bak/
-venv.bak/
+env/
 
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
+.claude/
 
 # Logs
 *.log
-logs/
 
-# Docker
-.docker/
+# Local development
+run_local.py
+docker-compose.yml
+Dockerfile
+
+# Testing
+test_*.py
+
+# Documentation & Presentations
+DOCUMENTATION.md
+*.pptx
+create_presentation.py
+presentation_assets/
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
