@@ -730,6 +730,62 @@ def create_market_volume_graph():
         return dbc.Alert(f"Fehler beim Laden der Marktdaten: {str(e)}", color="danger", className="mb-4")
 
 
+def create_market_share_pie_chart():
+    """Pie Chart: Marktanteile aller Firmen"""
+    try:
+        market_data = game.get_market_overview()
+        
+        if not market_data:
+            return dbc.Alert("Keine Firmendaten verfügbar", color="info")
+        
+        # Top 10 Firmen + Rest
+        top_firms = sorted(market_data, key=lambda x: x.get('market_share', 0), reverse=True)[:10]
+        other_share = sum(f.get('market_share', 0) for f in market_data[10:]) if len(market_data) > 10 else 0
+        
+        labels = [f"{f['name']}" for f in top_firms]
+        values = [f['market_share'] for f in top_firms]
+        
+        if other_share > 0:
+            labels.append("Andere")
+            values.append(other_share)
+        
+        # Erstelle Pie Chart
+        fig = go.Figure(data=[go.Pie(
+            labels=labels,
+            values=values,
+            hovertemplate='%{label}<br>Marktanteil: %{value:.2f}%<br>%{percent}<extra></extra>',
+            textinfo='label+percent',
+            textposition='auto',
+            marker=dict(
+                colors=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                        '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#aaaaaa']
+            )
+        )])
+        
+        fig.update_layout(
+            height=400,
+            margin=dict(l=20, r=20, t=40, b=20),
+            showlegend=True,
+            legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05)
+        )
+        
+        return dbc.Card([
+            dbc.CardHeader(html.H5([
+                html.I(className="fas fa-chart-pie me-2"),
+                "Marktanteile"
+            ])),
+            dbc.CardBody([
+                dcc.Graph(
+                    figure=fig,
+                    config={'displayModeBar': False}
+                )
+            ])
+        ], className="shadow-sm mb-4")
+        
+    except Exception as e:
+        return dbc.Alert(f"Fehler beim Laden: {str(e)}", color="danger")
+
+
 def create_cost_structure_card(firm_data):
     """Kostenstruktur & Spielmechanik - Detaillierte Ansicht wie in PDF"""
     costs = firm_data.get('costs', {})
@@ -1738,6 +1794,11 @@ def create_dashboard_layout(firm_id, firm_data):
             # Untere Zeile: Tabellen & Detaillierte Daten (Volle Breite / Mittig)
             dbc.Row([
                 dbc.Col([
+                    # Marktanteile Pie Chart (Live)
+                    html.Div(id="market-share-chart-container", children=create_market_share_pie_chart()),
+                ], width=12, lg=6),
+
+                dbc.Col([
                     # Marktübersicht Tabelle
                     html.Div(id="market-overview-container", children=create_market_table({"firms": []})),
                 ], width=12, lg=6),
@@ -1999,7 +2060,8 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
      Output("financing-container", "children"),
      Output("personnel-container", "children"),
      Output("balance-sheet-container", "children"),
-     Output("cost-structure-container", "children")],
+     Output("cost-structure-container", "children"),
+     Output("market-share-chart-container", "children")],
     [Input("refresh-interval", "n_intervals"),
      Input("firm-id-store", "data")],
     [State("historical-data-store", "data"),
@@ -2150,6 +2212,9 @@ def live_update_dashboard(n, firm_id, historical_data, active_tab,
         
         cost_structure_card = create_cost_structure_card(firm_data)
 
+        # Marktanteile Pie Chart
+        market_share_chart = create_market_share_pie_chart()
+
         return (
             kpis,
             current_settings,
@@ -2165,7 +2230,8 @@ def live_update_dashboard(n, firm_id, historical_data, active_tab,
             financing_card,
             personnel_card,
             balance_sheet_card,
-            cost_structure_card
+            cost_structure_card,
+            market_share_chart
         )
 
     except Exception as e:
@@ -2188,7 +2254,8 @@ def live_update_dashboard(n, firm_id, historical_data, active_tab,
             dash.no_update,  # financing
             dash.no_update,  # personnel
             dash.no_update,  # balance-sheet
-            dash.no_update   # cost-structure
+            dash.no_update,  # cost-structure
+            dash.no_update   # market-share-chart
         )
 
 
