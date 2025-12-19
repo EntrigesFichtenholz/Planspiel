@@ -1947,22 +1947,26 @@ def submit_decision(n_clicks, firm_id, price, capacity, marketing, rd, quality, 
     # Hole aktuelle Firma für Validierung
     try:
         # Create decision object
-        decision = DecisionInput(
-            product_price=price,
-            production_capacity=capacity,
-            marketing_budget=marketing,
-            rd_budget=rd,
-            quality_level=quality,
-            jit_safety_stock=jit,
-            process_optimization=process_opt or 0,
-            supplier_negotiation=supplier_neg or 0,
-            overhead_reduction=overhead_red or 0,
-            buildings_depreciation=buildings_depr,
-            machines_depreciation=machines_depr,
-            equipment_depreciation=equipment_depr
-        )
+        # Get firm
+        firm = game.get_firm_by_id(firm_id)
+        if not firm:
+            raise ValueError("Firma nicht gefunden")
 
-        result = game.process_decision(firm_id, decision)
+        # Apply decisions directly
+        firm.apply_decisions(
+            price=price,
+            capacity=capacity,
+            marketing=marketing,
+            rd=rd,
+            quality=quality,
+            jit_safety=jit,
+            process_opt=process_opt or 0,
+            supplier_neg=supplier_neg or 0,
+            overhead_red=overhead_red or 0,
+            buildings_depr=buildings_depr,
+            machines_depr=machines_depr,
+            equipment_depr=equipment_depr
+        )
         
         success_msg = html.Div([
             html.H6("Erfolgreich gespeichert!", className="text-success mb-2"),
@@ -2324,10 +2328,9 @@ def calculate_acquisition_valuation(n_clicks, acquirer_id, target_id, percentage
             return dbc.Alert("Firma nicht gefunden", color="danger"), None, True
 
         # Hole Bewertung
-        valuation = game.calculate_acquisition_cost(target_firm)
+        base_value = game.calculate_acquisition_cost(target_firm)
 
         # Berechne Preis für gewählten Anteil
-        base_value = valuation['enterprise_value']
         price_for_percentage = base_value * 1.30 * (percentage / 100.0)  # 30% Premium
 
         valuation_card = dbc.Alert([
