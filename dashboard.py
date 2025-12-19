@@ -2015,6 +2015,8 @@ def live_update_dashboard(n, firm_id, historical_data, active_tab,
                          # Innovation
                          innovation_amount):
     """Live-Update ALLER Dashboard-Elemente inkl. neuer Features (5s Intervall)"""
+    print(f"[Dashboard] live_update_dashboard called: n={n}, firm_id={firm_id}")
+
     if not firm_id:
         return (
             dash.no_update,
@@ -2036,10 +2038,12 @@ def live_update_dashboard(n, firm_id, historical_data, active_tab,
 
     try:
         # Fetch firm data directly
+        print(f"[Dashboard] Fetching firm {firm_id}...")
         firm = game.get_firm_by_id(firm_id)
         if not firm:
-            raise ValueError("Firma nicht gefunden")
+            raise ValueError(f"Firma {firm_id} nicht gefunden")
         firm_data = firm.to_dict()
+        print(f"[Dashboard] Firm data fetched successfully: {firm.name}")
 
         # Fetch market data directly
         market_data = game.get_market_overview()

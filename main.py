@@ -67,7 +67,10 @@ async def health():
         "status": "healthy",
         "debug_mode": DEBUG_MODE,
         "active_firms": len(game.firms),
-        "current_quarter": game.current_quarter
+        "current_quarter": game.current_quarter,
+        "quarter_duration": game.quarter_duration,
+        "is_active": game.is_active,
+        "game_object_id": id(game)
     }
 
 
