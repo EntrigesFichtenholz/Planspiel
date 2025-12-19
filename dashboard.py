@@ -473,6 +473,9 @@ def create_cost_info():
 def create_market_table(market_data, current_firm_id=None):
     """Marktübersicht Tabelle (ohne Buttons - M&A über separates Interface)"""
 
+    # Handle both dict (API format) and list (direct game.get_market_overview())
+    firms = market_data.get('firms', []) if isinstance(market_data, dict) else market_data
+
     return dbc.Card([
         dbc.CardHeader(html.H5([
             html.I(className="fas fa-chart-line me-2"),
@@ -498,7 +501,7 @@ def create_market_table(market_data, current_firm_id=None):
                         html.Td(f"€{format_de(firm['revenue'])}"),
                         html.Td(f"€{format_de(firm['profit'])}"),
                         html.Td(f"{firm['roi']:.1f}%"),
-                    ]) for firm in market_data.get('firms', [])
+                    ]) for firm in firms
                 ])
             ], bordered=True, hover=True, responsive=True, striped=True)
         ])
@@ -616,7 +619,8 @@ def create_market_volume_card():
         # Direkter Zugriff auf Game State
         market_data = game.get_market_overview()
 
-        firms = market_data.get('firms', [])
+        # market_data ist bereits die Liste der Firmen
+        firms = market_data
         total_market_volume = sum(f.get('revenue', 0) for f in firms)
         num_competitors = len(firms)
 
