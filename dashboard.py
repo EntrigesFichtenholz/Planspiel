@@ -1773,13 +1773,14 @@ def update_timer_only(n):
     """Sekündliches Update nur für den Timer"""
     try:
         # Direkter Zugriff
-        time_left = game.get_time_remaining()
+        time_left = game.get_time_until_next_quarter()
         quarter = game.current_quarter
-        
+
         minutes = time_left // 60
         seconds = time_left % 60
         return f"Quartal {quarter} | {minutes:02d}:{seconds:02d} bis zum nächsten Quartal"
-    except:
+    except Exception as e:
+        print(f"[Timer Error] {str(e)}")
         return "Verbindung..."
 
 
